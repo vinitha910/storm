@@ -67,7 +67,7 @@ class SwiperRollout(RolloutBase):
         '''
         out_states = self.dynamics_model.rollout_open_loop(start_state, act_seq)
         cost_seq = self.cost_fn(out_states)
-        print(cost_seq)
+        # print(cost_seq)
         sim_trajs = dict(
             actions=act_seq,
             costs=cost_seq,
