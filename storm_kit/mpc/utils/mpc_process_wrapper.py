@@ -52,7 +52,7 @@ class ControlProcess(object):
         self.current_state = None
         self.done = False
         self.opt_data = 0.0
-        self.n_dofs = controller.rollout_fn.dynamics_model.n_dofs
+        # self.n_dofs = controller.rollout_fn.dynamics_model.n_dofs
         
         self.traj_tstep = copy.deepcopy(controller.rollout_fn.dynamics_model._traj_tstep.detach().cpu())
         self.command_tstep = self.traj_tstep
@@ -63,17 +63,16 @@ class ControlProcess(object):
         self.top_idx = None
         self.control_space = control_space
         
-        #
         self.result_queue = Queue(maxsize=1)
         self.opt_queue = Queue(maxsize=1)
-
-        
+    
         self.opt_process = Process(target=optimize_process, args=('control_instance.p', self.opt_queue,self.result_queue))
         self.opt_process.daemon = True
         self.opt_process.start()
         self.controller = controller
         self.control_dt = control_dt
         self.prev_mpc_tstep = 0.0
+
     def predict_next_state(self, t_step, curr_state):
         # predict next state
         # given current t_step, integrate to t_step+mpc_dt
@@ -86,7 +85,8 @@ class ControlProcess(object):
             curr_state = self.controller.rollout_fn.dynamics_model.get_next_state(curr_state, command, self.mpc_dt)
     
         return curr_state
-    def get_command_debug(self, t_step, curr_state, debug=False, control_dt=0.01):
+    
+    def get_command_debug(self, t_step, curr_state, integrate_act=True, debug=False, control_dt=0.01):
         """ This function runs the controller in the same process and waits for optimization to  complete before return of a new command
         Args:
         t_step: current timestep
@@ -97,10 +97,11 @@ class ControlProcess(object):
         if(self.command is not None):
             curr_state = self.predict_next_state(t_step, curr_state)
 
-        current_state = np.append(curr_state, t_step + self.mpc_dt)
+        if integrate_act:
+            curr_state = np.append(curr_state, t_step + self.mpc_dt)
         shift_steps = find_first_idx(self.command_tstep, t_step + self.mpc_dt)
         
-        state_tensor = torch.as_tensor(current_state,**self.controller.tensor_args).unsqueeze(0)
+        state_tensor = torch.as_tensor(curr_state,**self.controller.tensor_args).unsqueeze(0)
 
 
         mpc_time = time.time()
@@ -121,17 +122,21 @@ class ControlProcess(object):
 
         command_buffer, command_tstep_buffer = self.truncate_command(self.command[0], t_step, self.command_tstep)
         
-        act = self.controller.rollout_fn.dynamics_model.integrate_action_step(command_buffer[0], self.control_dt)
-        return act, command_tstep_buffer, self.command[1], command_buffer
+        if integrate_act:
+            act = self.controller.rollout_fn.dynamics_model.integrate_action_step(command_buffer[0], self.control_dt)
+            return act, command_tstep_buffer, self.command[1], command_buffer
+    
+        return command_buffer, command_tstep_buffer, self.command[1], command_buffer
 
-    def get_command(self, t_step, curr_state, debug=False, control_dt=0.01):
+    def get_command(self, t_step, curr_state, integrate_act=True, debug=False, control_dt=0.01):
         if(self.opt_queue.empty()):# and self.command is None):
             # integrate current state to mpc_dt:
             #
             if(self.command is not None):
                 curr_state = self.predict_next_state(t_step, curr_state)
-            
-            curr_state = np.append(curr_state, t_step + self.mpc_dt)
+                
+            if integrate_act:
+                curr_state = np.append(curr_state, t_step + self.mpc_dt)
             
             # planned command:
             
@@ -174,9 +179,12 @@ class ControlProcess(object):
         command_buffer, command_tstep_buffer = self.truncate_command(self.command[0], t_step, self.command_tstep)
         
         #print(command_buffer.shape)
-        act = self.controller.rollout_fn.dynamics_model.integrate_action_step(command_buffer[0], self.control_dt)
-        return act, command_tstep_buffer, self.command[1], command_buffer
+        if integrate_act:
+            act = self.controller.rollout_fn.dynamics_model.integrate_action_step(command_buffer[0], self.control_dt)
+            return act, command_tstep_buffer, self.command[1], command_buffer
     
+        return command_buffer, command_tstep_buffer, self.command[1], command_buffer
+
     def truncate_command(self, command, trunc_tstep, command_tstep):
         #print(trunc_tstep, command_tstep[:4])
         f_idx = find_first_idx(command_tstep, trunc_tstep) #- 1
@@ -216,7 +224,13 @@ def optimize_process(control_string, opt_queue, result_queue):
         pass
     i = 0
     start_time = time.time()
-    state_tensor = torch.zeros((1, 2 * controller.rollout_fn.dynamics_model.n_dofs), **controller.tensor_args)
+    # state_tensor = torch.zeros((1, 2 * controller.rollout_fn.dynamics_model.n_dofs), **controller.tensor_args)
+    # state_tensor = torch.zeros((
+    #     1, 
+    #     controller.rollout_fn.dynamics_model.H, 
+    #     controller.rollout_fn.dynamics_model.W
+    # ), **controller.tensor_args)
+
     goal_count = 0
     while (True):
         opt_data = opt_queue.get()
@@ -226,7 +240,6 @@ def optimize_process(control_string, opt_queue, result_queue):
         state_tensor = torch.as_tensor(current_state,**controller.tensor_args).unsqueeze(0)
         shift_steps = opt_data['shift_steps']
 
-        
         # update goal pose if it's not none
         if(opt_data['params'] is not None):
             #print('updating goal...')

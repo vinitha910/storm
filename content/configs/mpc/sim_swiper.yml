@@ -1,0 +1,128 @@
+##
+## MIT License
+##
+## Copyright (c) 2020-2021 NVIDIA CORPORATION.
+##
+## Permission is hereby granted, free of charge, to any person obtaining a
+## copy of this software and associated documentation files (the "Software"),
+## to deal in the Software without restriction, including without limitation
+## the rights to use, copy, modify, merge, publish, distribute, sublicense,
+## and/or sell copies of the Software, and to permit persons to whom the
+## Software is furnished to do so, subject to the following conditions:
+##
+## The above copyright notice and this permission notice shall be included in
+## all copies or substantial portions of the Software.
+##
+## THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+## IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+## FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+## THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+## LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+## FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+## DEALINGS IN THE SOFTWARE.##
+
+# @package _global_
+use_cuda: True
+cuda_device_num: 0
+
+control_dt: 0.1
+# float_dtype: 'float32'
+data_dir: '/home/vinitha/data/small_train_data/'
+num_envs: 1 # Number of envs in single Isaac Gym instance
+sim_env_config:
+    headless: True
+    cam_pos: [0.0, 0.5, 0.000001] #[2.5, 1.5, 4]
+    cam_target: [0.0, 0.0, 0.0]
+    asset_path: "/home/vinitha/workspaces/granular_media_rl/assets/"        
+    urdf: "ball.urdf"  
+    spacing: 0.5
+
+    table_config:
+        width: 0.4
+        length: 0.4
+        depth: 0.01
+
+    particle_config:
+        particle_size: 0.003
+        particle_mass: 0.00003311965
+        pile_width: 5
+        pile_depth: 5
+        pile_height: 5
+        pile_start_height: 0.1
+
+    tool_config:
+        length: 0.05
+        width: 0.005
+        height: 0.05
+
+    camera_config:
+        cam_pos: [0.0, 0.211, 0.000001]
+        cam_target: [0.0, 0.0, 0.0]
+        width: 128
+        height: 128
+
+    physics_params:
+        sliding_friction: 1.0
+        rolling_friction: 1.0
+        torsion_friction: 1.0
+        restitution: 0.0
+
+    pile_config:
+        min_dx: -0.03
+        max_dx: 0.03
+        min_dy: -0.03
+        max_dy: 0.03     
+
+model:
+  dt: 15
+  max_action: 3.141592653589793 #10.0
+  batch_size: 10
+  sampling_threshold: 5.
+  sigma: 1
+  model_dir: "/home/vinitha/workspaces/granular_media_rl/point_set_dynamics_network/checkpoints/"
+  model_name: "model_t5_b4_s1_l7_10_seq"
+
+  network_config:
+    lr: 0.001
+    num_layers: 7
+    layer_config:
+      - e_inc: 6
+        e_outc: 6
+        edge_model_mlp1_hidden_sizes:
+        - 50
+        - 50
+        n_inc: 3
+        n_outc: 3
+        node_model_mlp1_hidden_sizes:
+        - 50
+        - 50
+        node_model_mlp2_hidden_sizes:
+        - 50
+
+mppi:
+  horizon           : 5 # 100
+  init_cov          : 3.0
+  gamma             : 0.98 #
+  n_iters           : 1
+  step_size_mean    : 1.0
+  step_size_cov     : 1.0
+  beta              : 0.25
+  alpha             : 1
+  num_particles     : 10 #10000
+  update_cov        : True
+  cov_type          : 'diag_AxA' # 
+  kappa             : 0.0001
+  null_act_frac     : 0.01
+  sample_mode       : 'mean'
+  base_action       : 'repeat'
+  squash_fn         : 'clamp' # [clamp,]
+  hotstart          : True
+  visual_traj       : 'state_seq'
+  sample_params:
+    type: 'halton'
+    fixed_samples: True
+    sample_ratio: {'halton':0.0, 'halton-knot':1.0, 'random':0.0, 'random-knot':0.0}
+    seed: 0
+    filter_coeffs: None #[0.5, 0.3, 0.2]
+    knot_scale: 5
+    #filter_coeffs: [1.0, 0.0, 0.0]

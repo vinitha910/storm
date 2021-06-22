@@ -166,7 +166,6 @@ class OLGaussianMPC(Controller):
     def sample_actions(self, state=None):
         delta = self.sample_lib.get_samples(sample_shape=self.sample_shape, base_seed=self.seed_val + self.num_steps)
 
-
         #add zero-noise seq so mean is always a part of samples
         delta = torch.cat((delta, self.Z_seq), dim=0)
         

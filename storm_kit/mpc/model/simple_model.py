@@ -229,7 +229,6 @@ class HolonomicModel(DynamicsModelBase):
         Returns:
             next_state
         """
-        
         if(self.control_space == 'jerk'):
             curr_state[2 * self.n_dofs:3 * self.n_dofs] = curr_state[self.n_dofs:2*self.n_dofs] + act * dt
             curr_state[self.n_dofs:2*self.n_dofs] = curr_state[self.n_dofs:2*self.n_dofs] + curr_state[self.n_dofs*2:self.n_dofs*3] * dt
