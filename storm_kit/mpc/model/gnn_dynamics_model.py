@@ -10,6 +10,7 @@ from torch_geometric.data import Data, Batch
 from ...mpc.model.model_base import DynamicsModelBase
 from ...mpc.model.integration_utils import build_int_matrix
 
+from particle_gym.utils import normalize_angle_rad, abs_diff
 from particle_dynamics_network.network import DynamicsNetwork 
 from particle_dynamics_network.heatmap import uneven_batch_kde
 import particle_dynamics_network.graph_construction as gc 
@@ -19,7 +20,7 @@ from particle_gym.rectangle import Rectangle
 class GNNDynamicsModel(DynamicsModelBase):
     def __init__(self, config, tensor_args={'device':'cpu','dtype':torch.float32}):
         self.tensor_args = tensor_args
-
+        
         # Camera properties
         self.wTc = config['cam_params']['wTc']
         self.cTi = config['cam_params']['cTi']
@@ -172,6 +173,17 @@ class GNNDynamicsModel(DynamicsModelBase):
         action_edge_features = torch.zeros(self.model_action_len)
         action_edge_features[-2:] = heading_vec
 
+        # from line_profiler import LineProfiler
+        # lp = LineProfiler()
+        # lp_wrapper = lp(gc.construct_graph)
+        # lp_wrapper(samples.to(**self.tensor_args), 
+        #     tool_node_features.to(**self.tensor_args), 
+        #     action_edge_features.to(**self.tensor_args),
+        #     self.tensor_args['device']
+        # )
+        # lp.print_stats()
+        # return
+
         graph = gc.construct_graph(
             samples.to(**self.tensor_args), 
             tool_node_features.to(**self.tensor_args), 
@@ -194,8 +206,6 @@ class GNNDynamicsModel(DynamicsModelBase):
             out: torch_geometric.data.Batch if using one gpu, 
                  [torch.geometric.data.Data] otherwise
         """
-        assert(len(act) == len(directions))
-
         graphs = []
         num_tool_nodes = []
         for i in range(len(batch_samples)):
@@ -204,6 +214,10 @@ class GNNDynamicsModel(DynamicsModelBase):
             self.tool.update(x, y, theta)
 
             if len(act) == 0:
+
+                # Update pushing heading
+                self.tool.update_direction(directions[i])
+
                 graph, M = self.get_push_action_graph(batch_samples[i])
 
                 # Update tool position
@@ -213,12 +227,7 @@ class GNNDynamicsModel(DynamicsModelBase):
                 self.tool.translate_along_vector(heading_vec, dist)
 
             else:
-                # from line_profiler import LineProfiler
-                # lp = LineProfiler()
-                # lp_wrapper = lp(self.get_rotate_action_graph)
-                # lp_wrapper(batch_samples[i], directions[i])
-                # lp.print_stats()
-                # return
+                assert(len(act) == len(directions))
                 graph, M = self.get_rotate_action_graph(batch_samples[i], directions[i])
 
                 # Update tool heading
@@ -246,12 +255,17 @@ class GNNDynamicsModel(DynamicsModelBase):
             out_points: list [[N0 x 2], [N1 x 2],...,[NB x 2]]
         '''
 
+        # act = torch.tensor([normalize_angle_rad(a.item()) for a in act]).unsqueeze(1).to(**self.tensor_args)
+
         # Calculate number of discrete rotations to reach desired heading for every
         # tool in the batch 
-        curr_theta = self.curr_tool_pose[:,-1].unsqueeze(1) # [B x d_act]
-        num_offsets = torch.round((act - curr_theta)/self.rotate_offset).flatten()
-        directions = torch.sign(num_offsets).unsqueeze(1)
-        num_offsets = torch.abs(num_offsets)
+        curr_theta = self.curr_tool_pose[:,-1].unsqueeze(1).to(**self.tensor_args) # [B x d_act]
+        num_offsets = torch.round(abs_diff(act, curr_theta)/self.rotate_offset).to(**self.tensor_args)
+        directions = abs_diff(act, curr_theta-num_offsets*self.rotate_offset) < self.rotate_offset
+        
+        # Update counter-clockwise directions
+        rotate_directions = torch.ones(act.shape).to(**self.tensor_args)
+        rotate_directions[torch.stack(torch.where(directions.squeeze() == False)).T] = -1
 
         # Convert desired heading for each tool in discrete steps and rollout for each step
         while sum(num_offsets) != 0:
@@ -260,18 +274,18 @@ class GNNDynamicsModel(DynamicsModelBase):
 
             # Get the samples and actions for the graphs that need to be reconstructed 
             samples_subset = [samples[i.item()] for i in indices]
-            act_subset = curr_theta[indices] + (self.rotate_offset*directions[indices])
-            
+            act_subset = curr_theta[indices] + (self.rotate_offset*num_offsets[indices]*rotate_directions[indices])
+
             # Reconstruct the graphs
             gnn_in, num_tool_nodes = \
                 self.batch_construct_graph(
                     samples_subset, 
                     act_subset.to(**self.tensor_args),
-                    directions[indices].to(**self.tensor_args)
+                    rotate_directions[indices].to(**self.tensor_args)
                 )
         
             new_samples = self.gnn_network.rollout(gnn_in, num_tool_nodes)
-
+            
             # Update the samples
             for i, j in zip(indices, range(len(indices))):
                 samples[i.item()] = new_samples[j]   
@@ -282,7 +296,7 @@ class GNNDynamicsModel(DynamicsModelBase):
             self.curr_tool_pose[:,-1] = curr_theta.squeeze()
 
         # Push tool along heading vector
-        graphs, num_tool_nodes = self.batch_construct_graph(samples)
+        graphs, num_tool_nodes = self.batch_construct_graph(samples, directions=directions)
         return self.gnn_network.rollout(graphs, num_tool_nodes)
 
     def get_next_state(self, curr_state, act, dt):
@@ -297,14 +311,15 @@ class GNNDynamicsModel(DynamicsModelBase):
         """
 
         # Assume dt is constant for now
-        _, H, W = curr_state.shape
+        B, H, W = curr_state.shape
         samples = self.get_batch_samples(torch.tensor(curr_state).to(**self.tensor_args))
-        gnn_out = self.rollout(samples, torch.tensor(act).to(**self.tensor_args))
+        gnn_out = self.rollout(samples, torch.tensor(act).repeat(B, 1).to(**self.tensor_args))
 
         return uneven_batch_kde(gnn_out, H, W, self.sigma, self.tensor_args['device'])
 
     def set_tool_pose(self, pose):
         x, _, y, theta = pose
+        theta = normalize_angle_rad(theta)
         self.curr_tool_pose = torch.tensor([[x, y, theta]]*self.batch_size).to(**self.tensor_args)
         self.tool.update(x, y, theta)
         

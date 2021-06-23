@@ -9,13 +9,12 @@ from ...mpc.rollout.rollout_base import RolloutBase
 class SwiperRollout(RolloutBase):
 
     def __init__(self, exp_params, env=None, tensor_args={'device':'cpu','dtype':torch.float32}):
+        print(tensor_args)
         self.tensor_args = tensor_args
         self.exp_params = exp_params
         mppi_params = exp_params['mppi']
 
         dynamics_horizon = mppi_params['horizon'] # model_params['dt']
-
-        self.tensor_args['device'] = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         if env != None:
             self.dynamics_model = SimDynamicsModel(

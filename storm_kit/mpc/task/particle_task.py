@@ -15,6 +15,7 @@ from ..utils.torch_utils import find_first_idx, find_last_idx
 class ParticleTask(BaseTask):
     def __init__(self, exp_params, env=None, tensor_args={'device':"cpu", 'dtype':torch.float32}):
         super().__init__(tensor_args=tensor_args)
+        print(tensor_args)
         self.env = env
         self.controller = self.init_mppi(exp_params)
         self.control_process = None 
@@ -63,6 +64,13 @@ class ParticleTask(BaseTask):
 
         shift_steps = find_first_idx(self.command_tstep, t_step + self.MPC_dt)
         if(shift_steps < 0): shift_steps = 0
+
+        from line_profiler import LineProfiler
+        lp = LineProfiler()
+        lp_wrapper = lp(self.controller.optimize)
+        lp_wrapper(curr_state, shift_steps=shift_steps)
+        lp.print_stats()
+        return
 
         self.command = list(self.controller.optimize(curr_state, shift_steps=shift_steps))
         self.MPC_dt = t_step - self.prev_mpc_tstep

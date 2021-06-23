@@ -103,6 +103,12 @@ class ControlProcess(object):
         
         state_tensor = torch.as_tensor(curr_state,**self.controller.tensor_args).unsqueeze(0)
 
+        # from line_profiler import LineProfiler
+        # lp = LineProfiler()
+        # lp_wrapper = lp(self.controller.optimize)
+        # lp_wrapper(state_tensor, shift_steps=shift_steps)
+        # lp.print_stats()
+        # return
 
         mpc_time = time.time()
         command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps))
