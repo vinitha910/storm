@@ -135,12 +135,13 @@ class GNNDynamicsModel(DynamicsModelBase):
             ), num_action_edge_attr_idx
 
         assert('num_action_edge_attr' in opt_data.keys())
-        out = gc.update_graph(
+        out, num_action_edges = gc.update_graph(
             samples.to(**self.tensor_args),
             tool_node_features.to(**self.tensor_args),
             opt_data['num_action_edge_attr'][num_action_edge_attr_idx],
             action_edge_features.to(**self.tensor_args)
         )
+        opt_data['num_action_edge_attr'][num_action_edge_attr_idx] = num_action_edges
         num_action_edge_attr_idx += 1
         return out, num_action_edge_attr_idx
 
@@ -181,9 +182,15 @@ class GNNDynamicsModel(DynamicsModelBase):
                 num_action_edge_attr_idx=num_action_edge_attr_idx,
                 opt_data=opt_data
             )
+            # if i == 0:
+            #     print(self.tool.theta)
+            #     print(directions[i].item())
+            #     print(normalize_angle_rad(actions[i].item()))
+            #     print()
+            #     gc.visualize(graph)
 
             # Update tool heading
-            self.tool.rotate(actions[i].item())
+            self.tool.rotate(normalize_angle_rad(actions[i].item()))
             self.curr_tool_pose[i] = torch.tensor([self.tool.cx, self.tool.cy, self.tool.theta])
 
             graphs.append(graph.to(self.tensor_args['device']))
@@ -213,13 +220,13 @@ class GNNDynamicsModel(DynamicsModelBase):
             self.tool.update(x, y, theta)
 
             # Update pushing heading
-            self.tool.update_direction(directions[i])
+            heading = self.tool.update_direction(directions[i])
 
             # Tool node features at initial timestep
             tool_node_features = torch.tensor(self.get_tool_particle_positions_px())
 
             # [0, 0, theta_x, theta_y]
-            theta = torch.tensor(self.tool.theta)        
+            theta = torch.tensor(heading)        
             heading_vec = \
                 torch.tensor([torch.cos(theta), torch.sin(theta)])
             action_edge_features = torch.zeros(self.model_action_len)
@@ -236,7 +243,7 @@ class GNNDynamicsModel(DynamicsModelBase):
             # Update tool position
             dist = (self.speed * self.fps) * (self.dt/self.fps)
             heading_vec = \
-                np.array([np.cos(self.tool.theta), np.sin(self.tool.theta)])
+                np.array([np.cos(heading), np.sin(heading)])
             self.tool.translate_along_vector(heading_vec, dist)
 
             self.curr_tool_pose[i] = torch.tensor([self.tool.cx, self.tool.cy, self.tool.theta])
@@ -281,7 +288,7 @@ class GNNDynamicsModel(DynamicsModelBase):
 
             # Get the samples and actions for the graphs that need to be reconstructed 
             graphs_subset = [graphs[i.item()] for i in indices]
-            act_subset = curr_theta[indices] + (self.rotate_offset*num_offsets[indices]*rotate_directions[indices])
+            act_subset = curr_theta[indices] + (self.rotate_offset*rotate_directions[indices])
 
             # from line_profiler import LineProfiler
             # lp = LineProfiler()
@@ -292,7 +299,7 @@ class GNNDynamicsModel(DynamicsModelBase):
             #         opt_data=opt_data)
             # lp.print_stats()
             # return
-            
+
             # Reconstruct the graphs
             gnn_in = \
                 self.batch_rotate_action_graphs(
@@ -366,12 +373,12 @@ class GNNDynamicsModel(DynamicsModelBase):
         samples = self.get_batch_samples(start_state)
 
         for i in range(self.horizon):
-            # from line_profiler import LineProfiler
-            # lp = LineProfiler()
-            # lp_wrapper = lp(self.rollout)
-            # lp_wrapper(samples, act_seq[:,i,:])
-            # lp.print_stats()
-            # return
+                # from line_profiler import LineProfiler
+                # lp = LineProfiler()
+                # lp_wrapper = lp(self.rollout)
+                # lp_wrapper(samples, act_seq[:,i,:])
+                # lp.print_stats()
+                # return
             samples = self.rollout(samples, act_seq[:,i,:])
 
             # [[B x H x W]]

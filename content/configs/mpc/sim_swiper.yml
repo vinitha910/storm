@@ -45,9 +45,9 @@ sim_env_config:
     particle_config:
         particle_size: 0.003
         particle_mass: 0.00003311965
-        pile_width: 5
-        pile_depth: 5
-        pile_height: 5
+        pile_width: 2
+        pile_depth: 2
+        pile_height: 2
         pile_start_height: 0.1
 
     tool_config:
@@ -76,7 +76,7 @@ sim_env_config:
 model:
   dt: 15
   max_action: 3.141592653589793 #10.0
-  batch_size: 500
+  batch_size: 200
   sampling_threshold: 5.
   sigma: 1
   model_dir: "/home/vinitha/workspaces/granular_media_rl/point_set_dynamics_network/checkpoints/"
@@ -100,13 +100,13 @@ model:
         - 50
 
 mppi:
-  horizon           : 5 # 100
-  init_cov          : 3.0
-  gamma             : 0.98 #
+  horizon           : 10 # 100
+  init_cov          : 0.01 #.5 #.5
+  gamma             : 0.98
   n_iters           : 1
-  step_size_mean    : 1.0
-  step_size_cov     : 1.0
-  beta              : 0.25
+  step_size_mean    : 0.98
+  step_size_cov     : 0.7
+  beta              : 0.4
   alpha             : 1
   num_particles     : 500 #10000
   update_cov        : True
