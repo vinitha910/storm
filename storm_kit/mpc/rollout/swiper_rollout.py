@@ -41,13 +41,14 @@ class SwiperRollout(RolloutBase):
         chamferDist = ChamferDistance()
 
         costs = []
+        _, _, H, W = states.shape
 
         # batch: [horizon, H, W]
         for batch in states:
             # state: [H, W]
             seq_cost = []
             for state in batch:
-                source_pts = torch.stack(torch.where(state > 0.75)).T.to(**self.tensor_args)
+                source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
                 cost = chamferDist(source_pts.unsqueeze(0), self.goal_pts.unsqueeze(0), bidirectional=True)
                 seq_cost.append(cost.item())
 
@@ -65,6 +66,8 @@ class SwiperRollout(RolloutBase):
                 act_seq: torch.Tensor [num_rollouts, horizon, act_vec]
         '''
         out_states = self.dynamics_model.rollout_open_loop(start_state, act_seq)
+        
+        # import IPython; IPython.embed()
         cost_seq = self.cost_fn(out_states)
         # print(cost_seq)
         sim_trajs = dict(
@@ -84,7 +87,8 @@ class SwiperRollout(RolloutBase):
                 goal_state: torch.Tensor [H x W]
         '''
         if goal_state is not None:
-            self.goal_pts = torch.stack(torch.where(goal_state.squeeze() == 1.)).T.to(**self.tensor_args)
+            _, H, W = goal_state.shape
+            self.goal_pts = torch.stack(torch.where(goal_state.squeeze() == 1.)).T.to(**self.tensor_args)/(H-1)
         if tool_pose is not None:
             self.dynamics_model.set_tool_pose(tool_pose)
 

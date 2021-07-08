@@ -29,6 +29,7 @@ import scipy.special
 import torch
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch.nn.functional import normalize as f_norm
+import matplotlib.pyplot as plt
 
 from .control_utils import cost_to_go, matrix_cholesky, batch_cholesky
 from .olgaussian_mpc import OLGaussianMPC
@@ -123,7 +124,8 @@ class MPPI(OLGaussianMPC):
         #print(ee_pos_seq.shape, top_idx)
         self.top_values = top_values
         self.top_idx = top_idx
-        self.top_trajs = torch.index_select(vis_seq, 0, top_idx).squeeze(0)
+        # self.top_trajs = torch.index_select(vis_seq, 0, top_idx).squeeze(0)
+        self.top_trajs = torch.index_select(actions, 0, top_idx).squeeze(0)
         #print(self.top_traj.shape)
         #print(self.best_traj.shape, best_idx, w.shape)
         #self.best_trajs = torch.index_select(
@@ -149,12 +151,13 @@ class MPPI(OLGaussianMPC):
         #matplotlib.use('tkagg')
         self.mean_action = (1.0 - self.step_size_mean) * self.mean_action +\
             self.step_size_mean * new_mean
-        #c = self.mean_action.cpu().numpy()
-        #plt.plot(a[:,0])
-        #plt.plot(b[:,0])
-        #plt.plot(actions[top_idx[0],:,0].cpu().numpy())
-        #plt.show()
-
+        c = self.mean_action.cpu().numpy()
+        # plt.plot(a[:,0])
+        # plt.plot(b[:,0])
+        # plt.plot(actions[top_idx[0],:,0].cpu().numpy())
+        # plt.show()
+        # print(new_mean, c)
+        
         delta = actions - self.mean_action.unsqueeze(0)
 
         #Update Covariance

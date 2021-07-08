@@ -52,7 +52,7 @@ class ParticleTask(BaseTask):
         else:
             next_command, val, info, best_action = self.control_process.get_command(t_step, curr_state.cpu().numpy(), integrate_act=False, control_dt=control_dt)
 
-        return next_command
+        return next_command, self.controller.trajectories['actions']
 
     def get_command(self, t_step, curr_state, control_dt=0.0, WAIT=False):
         if self.control_process != None:
@@ -65,12 +65,12 @@ class ParticleTask(BaseTask):
         shift_steps = find_first_idx(self.command_tstep, t_step + self.MPC_dt)
         if(shift_steps < 0): shift_steps = 0
 
-        from line_profiler import LineProfiler
-        lp = LineProfiler()
-        lp_wrapper = lp(self.controller.optimize)
-        lp_wrapper(curr_state, shift_steps=shift_steps)
-        lp.print_stats()
-        return
+        # from line_profiler import LineProfiler
+        # lp = LineProfiler()
+        # lp_wrapper = lp(self.controller.optimize)
+        # lp_wrapper(curr_state, shift_steps=shift_steps)
+        # lp.print_stats()
+        # return
 
         self.command = list(self.controller.optimize(curr_state, shift_steps=shift_steps))
         self.MPC_dt = t_step - self.prev_mpc_tstep
@@ -91,9 +91,7 @@ class ParticleTask(BaseTask):
         mppi_params['d_action'] = dynamics_model.d_action
         mppi_params['action_lows'] = -exp_params['model']['max_action'] * torch.ones(dynamics_model.d_action, **self.tensor_args)
         mppi_params['action_highs'] = exp_params['model']['max_action'] * torch.ones(dynamics_model.d_action, **self.tensor_args)
-        print(mppi_params['action_lows'])
-        print(mppi_params['action_highs'] )
-        init_action = torch.zeros((mppi_params['horizon'], dynamics_model.d_action), **self.tensor_args)
+        init_action = torch.ones((mppi_params['horizon'], dynamics_model.d_action), **self.tensor_args)*1.57
         mppi_params['init_mean'] = init_action
         mppi_params['rollout_fn'] = rollout_fn
         mppi_params['tensor_args'] = self.tensor_args
