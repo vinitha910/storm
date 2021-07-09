@@ -55,6 +55,7 @@ class ParticleTask(BaseTask):
         return next_command, self.controller.trajectories['actions']
 
     def get_command(self, t_step, curr_state, control_dt=0.0, WAIT=False):
+        torch.cuda.empty_cache()
         if self.control_process != None:
             return self.base_get_command(t_step, curr_state, control_dt, WAIT)
 

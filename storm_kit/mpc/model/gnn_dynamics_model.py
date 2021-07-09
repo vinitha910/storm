@@ -67,7 +67,8 @@ class GNNDynamicsModel(DynamicsModelBase):
         self.gnn_network.load(model_path)
 
         self.gnn_network.eval_mode()
-
+        torch.set_grad_enabled(False)
+        
     def world_to_pixel_coord(self, x, y, depth=None):
         if depth == None:
             depth = 0.01 # Top of the table
@@ -197,7 +198,7 @@ class GNNDynamicsModel(DynamicsModelBase):
             action_edge_features[1] = directions[i]
 
             graph, num_action_edge_attr_idx = self.construct_or_update_graph(
-                batch_samples[i],
+                batch_samples[i].to(**self.tensor_args),
                 tool_node_features,
                 action_edge_features,
                 num_action_edge_attr_idx=num_action_edge_attr_idx,
@@ -292,7 +293,7 @@ class GNNDynamicsModel(DynamicsModelBase):
         Return:
             out_points: list [[N0 x 2], [N1 x 2],...,[NB x 2]]
         '''
-
+        # torch.cuda.empty_cache()
         # act = torch.tensor([normalize_angle_rad(a.item()) for a in act]).unsqueeze(1).to(**self.tensor_args)
 
         # Calculate number of discrete rotations to reach desired heading for every
@@ -372,7 +373,7 @@ class GNNDynamicsModel(DynamicsModelBase):
 
         # Assume dt is constant for now
         B, H, W = curr_state.shape
-        samples = self.get_batch_samples(torch.tensor(curr_state).to(**self.tensor_args))
+        samples = self.get_batch_samples(torch.tensor(curr_state))
         gnn_out = self.rollout(samples, torch.tensor(act).repeat(B, 1).to(**self.tensor_args))
 
         return uneven_batch_kde(gnn_out, H, W, self.sigma, self.tensor_args['device'])
