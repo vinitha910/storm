@@ -27,7 +27,7 @@ cuda_device_num: 0
 
 control_dt: 0.1
 # float_dtype: 'float32'
-data_dir: '/home/vinitha/data/small_train_data/'
+data_dir: '/home/vinitha/data/new_train_data/'
 num_envs: 1 # Number of envs in single Isaac Gym instance
 sim_env_config:
     headless: True
@@ -45,9 +45,9 @@ sim_env_config:
     particle_config:
         particle_size: 0.003
         particle_mass: 0.00003311965
-        pile_width: 2
-        pile_depth: 2
-        pile_height: 3
+        pile_width: 4
+        pile_depth: 4
+        pile_height: 4
         pile_start_height: 0.1
 
     tool_config:
@@ -75,19 +75,21 @@ sim_env_config:
 
 model:
   dt: 15
-  max_action: 3.141592653589793 #10.0
+  max_action: 1 #10.0
+  max_speed: 0.1 #m/s
+  max_ang_vel: 3.141592653589793
   batch_size: 100
   sampling_threshold: 5.
   sigma: 1
-  model_dir: "/home/vinitha/workspaces/granular_media_rl/point_set_dynamics_network/checkpoints/"
-  model_name: "model_t5_b4_s1_l7_10_seq"
+  model_dir: "/home/vinitha/workspaces/mppi_particles/particle_dynamics_network/checkpoints/"
+  model_name: "seq_7_layers" #"model_t5_b4_s1_l7_10_seq"
 
   network_config:
     lr: 0.001
     num_layers: 7
     layer_config:
-      - e_inc: 6
-        e_outc: 6
+      - e_inc: 5
+        e_outc: 5
         edge_model_mlp1_hidden_sizes:
         - 50
         - 50
@@ -101,12 +103,12 @@ model:
 
 mppi:
   horizon           : 15 # 100
-  init_cov          : 2.5 #.5 #.5
+  init_cov          : 0.5 #.5 #.5
   gamma             : 0.98
   n_iters           : 1
   step_size_mean    : 0.5
   step_size_cov     : 0.5
-  beta              : 10.0
+  beta              : 1.0
   alpha             : 1
   num_particles     : 100 #10000
   update_cov        : True

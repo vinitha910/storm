@@ -16,6 +16,7 @@ from particle_dynamics_network.heatmap import uneven_batch_kde
 import particle_dynamics_network.graph_construction as gc 
 
 from particle_gym.rectangle import Rectangle 
+from visualize import visualize_traj
 
 class GNNDynamicsModel(DynamicsModelBase):
     def __init__(self, config, tensor_args={'device':'cpu','dtype':torch.float32}):
@@ -28,13 +29,15 @@ class GNNDynamicsModel(DynamicsModelBase):
 
         self.fps = 60.
         self.speed = 0.001
+        self.max_speed = config['model']['max_speed']
+        self.max_ang_vel = config['model']['max_ang_vel']
 
         # config = YamlConfig(config_path)
         self.dt = config['model']['dt']
         self.rotate_offset = np.pi/8
-        self.model_action_len = 4 # [slice, rotate_rad, theta_x, theta_y]
+        self.model_action_len = 3 # [slice, speed, angular velocity]
         self.n_dofs = 1
-        self.d_action = 1 # [heading]
+        self.d_action = 2 # [speed, angular velocity]
         self.batch_size = config['mppi']['num_particles']
         self.horizon = config['mppi']['horizon']
         self.num_traj_points = config['mppi']['horizon']
@@ -68,7 +71,7 @@ class GNNDynamicsModel(DynamicsModelBase):
 
         self.gnn_network.eval_mode()
         torch.set_grad_enabled(False)
-        
+
     def world_to_pixel_coord(self, x, y, depth=None):
         if depth == None:
             depth = 0.01 # Top of the table
@@ -112,7 +115,7 @@ class GNNDynamicsModel(DynamicsModelBase):
         for i in range(B):
             state = curr_state.squeeze()[i]
             samples = self.fps_samples(torch.nonzero(state))/(H - 1)
-            batch_samples.append(samples)
+            batch_samples.append(samples.to(**self.tensor_args))
 
         return batch_samples
 
@@ -128,238 +131,6 @@ class GNNDynamicsModel(DynamicsModelBase):
             
         return particles.to(**self.tensor_args)/(self.cam_props_width-1) 
 
-    def construct_or_update_graph(self, samples, tool_node_features, action_edge_features, num_action_edge_attr_idx=0, opt_data={}):
-        # Only construct graphs from scratch if not given graph, otherwise update
-        # the tool node features and actions edges/features in the existing graph
-        if isinstance(samples, torch.Tensor):
-            # from line_profiler import LineProfiler
-            # lp = LineProfiler()
-            # lp_wrapper = lp(gc.construct_graph)
-            # lp_wrapper(samples, 
-            #     tool_node_features, 
-            #     action_edge_features,
-            #     opt_data=opt_data)
-            # lp.print_stats()
-            # return
-
-            return gc.construct_graph(
-                samples, 
-                tool_node_features, 
-                action_edge_features,
-                opt_data=opt_data
-            ), num_action_edge_attr_idx
-
-        assert('num_action_edge_attr' in opt_data.keys())
-        out, num_action_edges = gc.update_graph(
-            samples,
-            tool_node_features.to(**self.tensor_args),
-            opt_data['num_action_edge_attr'][num_action_edge_attr_idx],
-            action_edge_features.to(**self.tensor_args)
-        )
-        opt_data['num_action_edge_attr'][num_action_edge_attr_idx] = num_action_edges
-        num_action_edge_attr_idx += 1
-        return out, num_action_edge_attr_idx
-
-    def batch_rotate_action_graphs(self, batch_samples, actions, directions, opt_data={}):
-        """
-        Constrct a single graph for a discrete rotate action
-    
-        Args:
-            batch_samples: torch.Tensor [[N0 x 2], [N1 x 2],...,[NB x 2]]
-            actions: [B x 1]; action params: [heading_rad]
-            directions: [B x 1] The direction the tool is rotating
-            tstep: float The current timestep
-            opt_data: dict Optional data containing number of tool nodes and action edges
-
-        Return:
-            out_graph: torch.geometric.data.Data
-        """
-
-        graphs = []
-        num_action_edge_attr_idx = 0
-        for i in range(len(batch_samples)):
-
-            # Set tool position at initial timestep
-            x, y, theta = self.curr_tool_pose[i].cpu().numpy()
-            self.tool.update(x, y, theta)
-
-            # from line_profiler import LineProfiler
-            # lp = LineProfiler()
-            # lp_wrapper = lp(self.get_tool_particle_positions_px)
-            # lp_wrapper()
-            # lp.print_stats()
-            # return
-
-            # Tool node features at initial timestep
-            tool_node_features = self.get_tool_particle_positions_px()
-
-            # [0, rotate_theta_rad, 0, 0]
-            action_edge_features = torch.zeros(self.model_action_len)
-            action_edge_features[1] = directions[i]
-
-            graph, num_action_edge_attr_idx = self.construct_or_update_graph(
-                batch_samples[i].to(**self.tensor_args),
-                tool_node_features,
-                action_edge_features,
-                num_action_edge_attr_idx=num_action_edge_attr_idx,
-                opt_data=opt_data
-            )
-            # if i == 0:
-            #     print(self.tool.theta)
-            #     print(directions[i].item())
-            #     print(actions[i].item())
-            #     print()
-            #     gc.visualize(graph)
-
-            # Update tool heading
-            self.tool.rotate(actions[i].item())
-            self.curr_tool_pose[i] = torch.tensor([self.tool.cx, self.tool.cy, self.tool.theta])
-
-            graphs.append(graph.to(self.tensor_args['device']))
-
-        if torch.cuda.device_count() > 1:
-            return graphs
-
-        return Batch.from_data_list(graphs)
-
-    def batch_push_action_graph(self, batch_samples, opt_data={}):
-        """
-        Constrct a batch of graphs for a push action
-    
-        Args:
-            samples: list [N x 2]
-
-        Return:
-            out_graph: torch.geometric.data.Data
-            M: float Number of tool nodes
-        """
-        graphs = []
-        num_action_edge_attr_idx = 0
-        for i in range(len(batch_samples)):
-
-            # Set tool position at initial timestep
-            x, y, theta = self.curr_tool_pose[i].cpu().numpy()
-            self.tool.update(x, y, theta)
-
-            # Update pushing heading
-            # heading = self.tool.update_direction(directions[i])
-            heading = self.tool.theta
-
-            # Tool node features at initial timestep
-            tool_node_features = self.get_tool_particle_positions_px()
-
-            # [0, 0, theta_x, theta_y]
-            theta = torch.tensor(heading)        
-            heading_vec = \
-                torch.tensor([torch.cos(theta), torch.sin(theta)])
-            action_edge_features = torch.zeros(self.model_action_len)
-            action_edge_features[-2:] = heading_vec
-
-            graph, num_action_edge_attr_idx = self.construct_or_update_graph(
-                batch_samples[i].to(**self.tensor_args),
-                tool_node_features,
-                action_edge_features,
-                num_action_edge_attr_idx=num_action_edge_attr_idx,
-                opt_data=opt_data
-            )
-            # if i == 0:
-            #     print(heading)
-            #     print()
-            #     gc.visualize(graph)
-
-            # Update tool position
-            dist = (self.speed * self.fps) * (self.dt/self.fps)
-            heading_vec = \
-                np.array([np.cos(heading), np.sin(heading)])
-            self.tool.translate_along_vector(heading_vec, dist)
-
-            self.curr_tool_pose[i] = torch.tensor([self.tool.cx, self.tool.cy, self.tool.theta])
-
-            graphs.append(graph.to(self.tensor_args['device']))
-
-        if torch.cuda.device_count() > 1:
-            return graphs
-
-        return Batch.from_data_list(graphs).to(self.tensor_args['device'])
-
-    def rollout(self, samples, act):
-        '''
-        Rollout a batch of states for a single timestep
-
-        Args: 
-            samples: list [[N0 x 2], [N1 x 2],...,[NB x 2]]
-            act: torch.Tensor [B x d_act]
-
-        Return:
-            out_points: list [[N0 x 2], [N1 x 2],...,[NB x 2]]
-        '''
-        # torch.cuda.empty_cache()
-        # act = torch.tensor([normalize_angle_rad(a.item()) for a in act]).unsqueeze(1).to(**self.tensor_args)
-
-        # Calculate number of discrete rotations to reach desired heading for every
-        # tool in the batch 
-        curr_theta = self.curr_tool_pose[:,-1].clone().unsqueeze(1) # [B x d_act]
-        # num_offsets = torch.round(abs_diff(act, curr_theta)/self.rotate_offset)
-        # import IPython; IPython.embed()
-        # directions = abs_diff(act, curr_theta+num_offsets*self.rotate_offset) < self.rotate_offset
-    
-        # Update counter-clockwise directions
-        # rotate_directions = torch.ones(act.shape).to(**self.tensor_args)
-        # rotate_directions[torch.stack(torch.where(directions.squeeze() == False)).T] = -1
-
-        num_offsets = torch.round((act - curr_theta)/self.rotate_offset)
-        rotate_directions = torch.tensor(np.sign(num_offsets.cpu().numpy())).to(**self.tensor_args)
-        num_offsets = abs(num_offsets)
-
-        graphs = samples.copy()
-        opt_data = {}
-        # Convert desired heading for each tool in discrete steps and rollout for each step
-        while sum(num_offsets) != 0:
-            # Find indices of tools that need to be rotated
-            indices = torch.where(num_offsets > 0)[0]
-
-            # Get the samples and actions for the graphs that need to be reconstructed 
-            graphs_subset = [graphs[i.item()] for i in indices]
-            act_subset = curr_theta[indices] + (self.rotate_offset*rotate_directions[indices])
-            # from line_profiler import LineProfiler
-            # lp = LineProfiler()
-            # lp_wrapper = lp(self.batch_rotate_action_graphs)
-            # lp_wrapper(graphs_subset, 
-            #         act_subset,
-            #         rotate_directions[indices],
-            #         opt_data=opt_data)
-            # lp.print_stats()
-            # return
-
-            # Reconstruct the graphs
-            gnn_in = \
-                self.batch_rotate_action_graphs(
-                    graphs_subset, 
-                    act_subset,
-                    rotate_directions[indices],
-                    opt_data=opt_data
-                )
-
-            gnn_out = self.gnn_network.rollout(gnn_in, opt_data['num_tool_nodes'])
-
-            # Update the samples
-            for i, j in zip(indices, range(len(indices))):
-                graphs[i.item()] = gnn_out[j]   
-            
-            # Update the tools that have been rotated for the next iteration
-            num_offsets[indices] -= 1
-            curr_theta[indices] = act_subset
-            self.curr_tool_pose[:,-1] = curr_theta.squeeze()
-
-        # import IPython; IPython.embed()
-        # Push tool along heading vector
-        gnn_in = self.batch_push_action_graph(
-            graphs, opt_data=opt_data
-        )
-
-        gnn_out = self.gnn_network.rollout(gnn_in, opt_data['num_tool_nodes'])
-        return self.gnn_network.get_nodes(gnn_out, opt_data['num_tool_nodes'])
-
     def get_next_state(self, curr_state, act, dt):
         """
         Args:
@@ -374,16 +145,34 @@ class GNNDynamicsModel(DynamicsModelBase):
         # Assume dt is constant for now
         B, H, W = curr_state.shape
         samples = self.get_batch_samples(torch.tensor(curr_state))
-        gnn_out = self.rollout(samples, torch.tensor(act).repeat(B, 1).to(**self.tensor_args))
 
-        return uneven_batch_kde(gnn_out, H, W, self.sigma, self.tensor_args['device'])
+        # [slice, speed, angular velocity]
+        action_edge_features = torch.zeros((B, self.model_action_len))
+        action_edge_features[:,1] = abs(float(act[0]))
+        action_edge_features[:,2] = float(act[1])
 
+        x, y, theta = self.curr_tool_pose.cpu().numpy()
+        self.tool.update(x, y, theta)
+        tool_node_features = torch.stack([self.get_tool_particle_positions_px()]*B)
+        M = tool_node_features.shape[1]
+        
+        gnn_in = gc.batch_construct_graph(
+            samples, 
+            tool_node_features, 
+            action_edge_features.to(**self.tensor_args),
+            device=self.tensor_args['device']
+        )
+        
+        out_gnn = self.gnn_network.rollout(gnn_in)
+        new_samples = self.gnn_network.get_nodes(out_gnn, [M]*B)
+        return uneven_batch_kde(new_samples, H, W, self.sigma, self.tensor_args['device'])
+       
     def set_tool_pose(self, pose):
         x, _, y, theta = pose
         theta = normalize_angle_rad(theta)
-        self.curr_tool_pose = torch.tensor([[x, y, theta]]*self.batch_size).to(**self.tensor_args)
+        self.curr_tool_pose = torch.tensor([x, y, theta]).to(**self.tensor_args)
         self.tool.update(x, y, theta)
-        
+     
     def rollout_open_loop(self, start_state, act_seq):
         """
         Return sequence of costs and states encountered
@@ -400,22 +189,79 @@ class GNNDynamicsModel(DynamicsModelBase):
         # Scale action sequence to true action range
         # act_seq *= np.pi 
 
-        _, H, W = start_state.squeeze().shape
+        B, H, W = start_state.squeeze().shape
         out_states = []
         samples = self.get_batch_samples(start_state)
 
-        for i in range(self.horizon):
-            # from line_profiler import LineProfiler
-            # lp = LineProfiler()
-            # lp_wrapper = lp(self.rollout)
-            # lp_wrapper(samples, act_seq[:,i,:])
-            # lp.print_stats()
-            # return
-            samples = self.rollout(samples, act_seq[:,i,:])
+        # [slice, speed, angular velocity]
+        action_edge_features = torch.zeros((B, self.horizon, self.model_action_len))
+        action_edge_features[:,:,1] = abs(act_seq[:,:,0])
+        action_edge_features[:,:,2] = act_seq[:,:,1]
 
-            # [[B x H x W]]
+        x, y, theta = self.curr_tool_pose.cpu().numpy()
+        self.tool.update(x, y, theta)
+        tool_node_features = torch.stack([self.get_tool_particle_positions_px()]*B)
+        M = tool_node_features.shape[1]
+        # import IPython; IPython.embed()
+
+        out_states = []
+        for t in range(self.horizon):
+            if t == 0:
+                # Construct batch of graphs at timestep t using previous timestep rollout
+                opt_data = {}
+                st = gc.batch_construct_graph(
+                    samples, 
+                    tool_node_features, 
+                    action_edge_features[:,t,:],
+                    device=self.tensor_args['device'],
+                    opt_data=opt_data
+                )
+                num_action_edges = opt_data['num_action_edge_attr']
+                x = torch.tensor([x]*B).to(**self.tensor_args)
+                y = torch.tensor([y]*B).to(**self.tensor_args)
+                theta = torch.tensor([theta]*B).to(**self.tensor_args)
+                
+            else:
+                st, num_action_edges = gc.batch_update_graph(
+                    out_gnn,
+                    tool_node_features,
+                    num_action_edges,
+                    action_edge_features[:,t,:],
+                    device=self.tensor_args['device']
+                )
+
+            out_gnn = self.gnn_network.rollout(st)
+            new_samples = self.gnn_network.get_nodes(out_gnn, [M]*B)
             out_states.append(uneven_batch_kde(samples, H, W, self.sigma, self.tensor_args['device']))
 
-        # B x T x H x W
-        return torch.stack(out_states, axis=1)
+            # import IPython; IPython.embed()
+            visualize_traj(start_state.squeeze()[0], st[0], new_samples[0])
+            arc_length = abs(act_seq[:,t,0])*self.max_speed
+            arc_theta = act_seq[:,t,1]*self.max_ang_vel
+            radius = arc_length/(arc_theta + 1e-10)
+            # print(t, arc_length, arc_length)
+            cx = x - radius*torch.cos(theta - np.pi/2)
+            cy = y + radius*torch.sin(theta - np.pi/2)
+            
+            dx = radius * torch.cos(theta + arc_theta - np.pi/2)
+            dy = radius * torch.sin(theta + arc_theta - np.pi/2)
+            
+            x = cx + dx
+            y = cy - dy
+            theta = arc_theta + theta
 
+            tool_node_features = []
+            for xi, yi, thi in zip(x, y, theta):
+                self.tool.update(xi.item(), yi.item(), thi.item())
+                tool_node_features.append(self.get_tool_particle_positions_px())
+
+            tool_node_features = torch.stack(tool_node_features)
+
+        return torch.stack(out_states, axis=1)
+        
+        # from line_profiler import LineProfiler
+        # lp = LineProfiler()
+        # lp_wrapper = lp(self.rollout)
+        # lp_wrapper(samples, act_seq[:,i,:])
+        # lp.print_stats()
+        # return

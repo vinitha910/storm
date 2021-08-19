@@ -51,7 +51,7 @@ class SwiperRollout(RolloutBase):
                 source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
                 cost = chamferDist(source_pts.unsqueeze(0), self.goal_pts.unsqueeze(0), bidirectional=True)
                 seq_cost.append(cost.item())
-
+                
             costs.append(seq_cost)
 
         return torch.tensor(costs).to(**self.tensor_args)
@@ -67,8 +67,8 @@ class SwiperRollout(RolloutBase):
         '''
         out_states = self.dynamics_model.rollout_open_loop(start_state, act_seq)
         
-        # import IPython; IPython.embed()
         cost_seq = self.cost_fn(out_states)
+        # import IPython; IPython.embed()
         # print(cost_seq)
         sim_trajs = dict(
             actions=act_seq,

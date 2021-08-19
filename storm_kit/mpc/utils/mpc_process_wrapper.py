@@ -111,8 +111,13 @@ class ControlProcess(object):
         # return
 
         mpc_time = time.time()
+        # if t_step == 0:
+        #     command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps, n_iters=5))
+        # else:
         command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps))
         mpc_time = time.time() - mpc_time
+        print('MPC TIME: ' + str(mpc_time))
+
         command[0] = command[0].cpu().numpy()
         self.command_tstep = self.traj_tstep + t_step
         
