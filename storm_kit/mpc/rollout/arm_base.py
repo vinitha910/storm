@@ -220,9 +220,9 @@ class ArmBase(RolloutBase):
         action_seq: torch.Tensor [num_particles, horizon, d_act]
         """
         # rollout_start_time = time.time()
-        #print("computing rollout")
-        #print(act_seq)
-        #print('step...')
+        print("computing rollout")
+        print(act_seq)
+        print('step...')
         with profiler.record_function("robot_model"):
             state_dict = self.dynamics_model.rollout_open_loop(start_state, act_seq)
         

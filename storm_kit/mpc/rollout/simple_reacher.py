@@ -163,7 +163,6 @@ class SimpleReacher(object):
             cost[:,-1] += torch.sum(term_cost, dim=-1)
         
 
-        import IPython; IPython.embed()
         if(return_dist):
             return cost, goal_dist
         else:

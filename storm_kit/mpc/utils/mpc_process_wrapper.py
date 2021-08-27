@@ -78,9 +78,10 @@ class ControlProcess(object):
         # given current t_step, integrate to t_step+mpc_dt
         t1_idx = find_first_idx(self.command_tstep, t_step) - 1
         t2_idx = find_first_idx(self.command_tstep, t_step + self.mpc_dt) #- 1
-
+        print(self.command_tstep, t_step, self.mpc_dt)
         # integrate from t1->t2
         for i in range(t1_idx, t2_idx):
+            print("integrating timestep " + str(i))
             command = self.command[0][i]
             curr_state = self.controller.rollout_fn.dynamics_model.get_next_state(curr_state, command, self.mpc_dt)
     
@@ -94,12 +95,12 @@ class ControlProcess(object):
         debug: flag to enable debug commands [not implemented]
         control_dt: dt to integrate command to acceleration space from a higher order space(jerk, snap). 
         """
-        if(self.command is not None):
-            curr_state = self.predict_next_state(t_step, curr_state)
+        # if(self.command is not None):
+        #     curr_state = self.predict_next_state(t_step, curr_state)
 
         if integrate_act:
             curr_state = np.append(curr_state, t_step + self.mpc_dt)
-        shift_steps = find_first_idx(self.command_tstep, t_step + self.mpc_dt)
+        shift_steps = 1 #find_first_idx(self.command_tstep, t_step + self.mpc_dt)
         
         state_tensor = torch.as_tensor(curr_state,**self.controller.tensor_args).unsqueeze(0)
 
@@ -111,9 +112,6 @@ class ControlProcess(object):
         # return
 
         mpc_time = time.time()
-        # if t_step == 0:
-        #     command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps, n_iters=5))
-        # else:
         command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps))
         mpc_time = time.time() - mpc_time
         print('MPC TIME: ' + str(mpc_time))

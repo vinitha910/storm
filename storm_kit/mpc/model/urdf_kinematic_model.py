@@ -173,6 +173,7 @@ class URDFKinematicModel(DynamicsModelBase):
     def rollout_open_loop(self, start_state: torch.Tensor, act_seq: torch.Tensor,
                           dt=None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # batch_size, horizon, d_act = act_seq.shape
+        import IPython; IPython.embed()
         curr_dt = self.dt if dt is None else dt
         curr_horizon = self.horizon
         # get input device:

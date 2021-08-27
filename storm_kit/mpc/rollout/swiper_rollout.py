@@ -1,8 +1,9 @@
 import torch
 import numpy as np 
 from chamferdist import ChamferDistance
+import time 
 
-from ...mpc.model.gnn_dynamics_model import GNNDynamicsModel
+from ...mpc.model.cont_gnn_dynamics_model import GNNDynamicsModel
 from ...mpc.model.sim_dynamics_model import SimDynamicsModel
 from ...mpc.rollout.rollout_base import RolloutBase
 
@@ -14,21 +15,13 @@ class SwiperRollout(RolloutBase):
         self.exp_params = exp_params
         mppi_params = exp_params['mppi']
 
-        dynamics_horizon = mppi_params['horizon'] # model_params['dt']
+        self.horizon = mppi_params['horizon'] # model_params['dt']
 
-        if env != None:
-            self.dynamics_model = SimDynamicsModel(
-                config=self.exp_params, 
-                vector_env=env,
-                tensor_args=self.tensor_args
-            )
-        else:
-            self.dynamics_model = GNNDynamicsModel(
-                config=self.exp_params,
-                tensor_args=self.tensor_args
-            )
-            
-
+        self.dynamics_model = GNNDynamicsModel(
+            config=self.exp_params,
+            tensor_args=self.tensor_args
+        )
+        
         self.goal_pts = None
 
     def cost_fn(self, states):
@@ -41,19 +34,25 @@ class SwiperRollout(RolloutBase):
         chamferDist = ChamferDistance()
 
         costs = []
-        _, _, H, W = states.shape
-
+        # B, T, _ = states.shape
+        H = W = 128
+        # states = states[:,:,:-3].reshape(B,T,H,W)
+        states = states.to(**self.tensor_args)
         # batch: [horizon, H, W]
         for batch in states:
             # state: [H, W]
             seq_cost = []
             for state in batch:
-                source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
-                cost = chamferDist(source_pts.unsqueeze(0), self.goal_pts.unsqueeze(0), bidirectional=True)
-                seq_cost.append(cost.item())
-                
+                # source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
+                # if len(source_pts) == 0:
+                #     cost = 10000
+                # else: 
+                # if state.min() < 0 or state.max() > 1 or state.max() < 0 or state.min() > 1:
+                #     cost = 10000
+                # else:
+                cost = chamferDist(state.unsqueeze(0), self.goal_pts.unsqueeze(0), bidirectional=True).item()
+                seq_cost.append(cost)
             costs.append(seq_cost)
-
         return torch.tensor(costs).to(**self.tensor_args)
 
     def rollout_fn(self, start_state, act_seq):
@@ -65,15 +64,16 @@ class SwiperRollout(RolloutBase):
                 start_state: torch.Tensor [H, W]
                 act_seq: torch.Tensor [num_rollouts, horizon, act_vec]
         '''
+        rollout_time = time.time()
         out_states = self.dynamics_model.rollout_open_loop(start_state, act_seq)
-        
+        rollout_time = time.time() - rollout_time
+
         cost_seq = self.cost_fn(out_states)
-        # import IPython; IPython.embed()
         # print(cost_seq)
         sim_trajs = dict(
             actions=act_seq,
             costs=cost_seq,
-            rollout_time=0.0,
+            rollout_time=rollout_time,
             state_seq=out_states
         )
 
@@ -89,8 +89,8 @@ class SwiperRollout(RolloutBase):
         if goal_state is not None:
             _, H, W = goal_state.shape
             self.goal_pts = torch.stack(torch.where(goal_state.squeeze() == 1.)).T.to(**self.tensor_args)/(H-1)
-        if tool_pose is not None:
-            self.dynamics_model.set_tool_pose(tool_pose)
+        # if tool_pose is not None:
+        #     self.dynamics_model.set_tool_pose(tool_pose)
 
     def __call__(self, start_state, act_seq):
         return self.rollout_fn(start_state, act_seq)
