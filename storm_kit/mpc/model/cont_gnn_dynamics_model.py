@@ -222,6 +222,7 @@ class GNNDynamicsModel(DynamicsModelBase):
         tool_poses = []
         tool_features = []
         for t in range(self.horizon):
+            # import ipdb; ipdb.set_trace()
             # Get the tool node features from the current tool poses
             tool_node_features = self.get_tool_particle_positions_px()
             self.tools.integrate_action_step(exec_act_seq[:,t,:])

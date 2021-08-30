@@ -16,6 +16,7 @@ class SwiperRollout(RolloutBase):
         mppi_params = exp_params['mppi']
 
         self.horizon = mppi_params['horizon'] # model_params['dt']
+        self.batch_size = exp_params['model']['batch_size']
 
         self.dynamics_model = GNNDynamicsModel(
             config=self.exp_params,
@@ -37,23 +38,22 @@ class SwiperRollout(RolloutBase):
         # B, T, _ = states.shape
         H = W = 128
         # states = states[:,:,:-3].reshape(B,T,H,W)
-        states = states.to(**self.tensor_args)
         # batch: [horizon, H, W]
-        for batch in states:
-            # state: [H, W]
-            seq_cost = []
-            for state in batch:
-                # source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
-                # if len(source_pts) == 0:
-                #     cost = 10000
-                # else: 
-                # if state.min() < 0 or state.max() > 1 or state.max() < 0 or state.min() > 1:
-                #     cost = 10000
-                # else:
-                cost = chamferDist(state.unsqueeze(0), self.goal_pts.unsqueeze(0), bidirectional=True).item()
-                seq_cost.append(cost)
-            costs.append(seq_cost)
-        return torch.tensor(costs).to(**self.tensor_args)
+        batches = []
+        for t in range(self.horizon):
+            batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')
+            batches.append(batch.unsqueeze(1))
+        costs = torch.cat(batches, dim=1)
+
+        return costs
+
+        # source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
+        # if len(source_pts) == 0:
+        #     cost = 10000
+        # else: 
+        # if state.min() < 0 or state.max() > 1 or state.max() < 0 or state.min() > 1:
+        #     cost = 10000
+        # else:
 
     def rollout_fn(self, start_state, act_seq):
         '''
@@ -88,7 +88,9 @@ class SwiperRollout(RolloutBase):
         '''
         if goal_state is not None:
             _, H, W = goal_state.shape
-            self.goal_pts = torch.stack(torch.where(goal_state.squeeze() == 1.)).T.to(**self.tensor_args)/(H-1)
+            goal_pts = torch.stack(torch.where(goal_state.squeeze() == 1.)).T.to(**self.tensor_args)/(H-1)
+            self.goal_pts = goal_pts.unsqueeze(0).repeat(self.batch_size,1,1)
+
         # if tool_pose is not None:
         #     self.dynamics_model.set_tool_pose(tool_pose)
 
