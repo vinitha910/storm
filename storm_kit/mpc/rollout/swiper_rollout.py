@@ -2,6 +2,7 @@ import torch
 import numpy as np 
 from chamferdist import ChamferDistance
 import time 
+import matplotlib.pyplot as plt
 
 from ...mpc.model.cont_gnn_dynamics_model import GNNDynamicsModel
 from ...mpc.model.sim_dynamics_model import SimDynamicsModel
@@ -37,11 +38,11 @@ class SwiperRollout(RolloutBase):
         costs = []
         # B, T, _ = states.shape
         H = W = 128
-        # states = states[:,:,:-3].reshape(B,T,H,W)
+        # states = states[:,:,:-3].reshape(self.batch_size,self.horizon,H,W)
         # batch: [horizon, H, W]
         batches = []
         for t in range(self.horizon):
-            batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')
+            batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')**2
             batches.append(batch.unsqueeze(1))
         costs = torch.cat(batches, dim=1)
 
@@ -64,10 +65,17 @@ class SwiperRollout(RolloutBase):
                 start_state: torch.Tensor [H, W]
                 act_seq: torch.Tensor [num_rollouts, horizon, act_vec]
         '''
+        from line_profiler import LineProfiler
+        lp = LineProfiler()
+        lp_wrapper = lp(self.dynamics_model.rollout_open_loop)
+        lp_wrapper(start_state, act_seq)
+        lp.print_stats()
+        return
+
         rollout_time = time.time()
         out_states = self.dynamics_model.rollout_open_loop(start_state, act_seq)
         rollout_time = time.time() - rollout_time
-
+        print("Rollout Time: " + str(rollout_time))
         cost_seq = self.cost_fn(out_states)
         # print(cost_seq)
         sim_trajs = dict(
@@ -76,6 +84,21 @@ class SwiperRollout(RolloutBase):
             rollout_time=rollout_time,
             state_seq=out_states
         )
+
+        # for (cost, act, batch) in zip(cost_seq, act_seq, out_states):
+        #     fig, axes = plt.subplots(1,5, figsize=(25, 5))
+        #     for i in range(len(batch)):
+        #         xs = batch[i][:,0].cpu().detach().numpy()
+        #         ys = batch[i][:,1].cpu().detach().numpy()
+        #         for x, y in zip(xs, ys):
+        #             axes[i].add_artist(plt.Circle((y, x), 0.01, color='red', linewidth=0.5, alpha=0.5))
+        #         for x, y in self.goal_pts[0]:
+        #             axes[i].add_artist(plt.Circle((y, x), 0.01, color='blue', linewidth=0.5, alpha=0.5))
+        #     print(cost)
+        #     print(act)
+        #     print()
+        #     plt.show()
+        #     plt.close()
 
         return sim_trajs
 

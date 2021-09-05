@@ -95,15 +95,15 @@ class OLGaussianMPC(Controller):
         self.squash_fn = squash_fn
 
         self.null_act_frac = null_act_frac
-        print(null_act_frac)
         self.num_null_particles = round(int(null_act_frac * self.num_particles * 1.0))
 
 
         self.num_neg_particles = round(int(null_act_frac * self.num_particles)) - self.num_null_particles
 
         self.num_nonzero_particles = self.num_particles - self.num_null_particles - self.num_neg_particles
-
-        #print(self.num_null_particles, self.num_neg_particles)
+        # self.num_nonzero_particles = int(self.num_nonzero_particles/2)
+        # self.num_neg_particles = self.num_nonzero_particles
+        print(self.num_null_particles, self.num_neg_particles, self.num_nonzero_particles)
 
         self.sample_params = sample_params
         self.sample_type = sample_params['type']
@@ -189,7 +189,7 @@ class OLGaussianMPC(Controller):
         debug_act = delta[:,:,0].cpu().numpy()
 
         act_seq = self.mean_action.unsqueeze(0) + scaled_delta
-        print(self.mean_action)
+        # print(self.mean_action)
 
         act_seq = scale_ctrl(act_seq, self.action_lows, self.action_highs, squash_fn=self.squash_fn)
         

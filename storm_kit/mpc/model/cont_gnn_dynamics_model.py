@@ -11,10 +11,9 @@ from ...mpc.model.model_base import DynamicsModelBase
 from ...mpc.model.integration_utils import build_int_matrix
 
 from particle_dynamics_network.lit_graph_network import LitGraphNetwork
-from particle_dynamics_network.lit_utils import fps_samples, batch_construct_graph, seq_batch_kde
+from particle_dynamics_network.lit_utils import fps_samples, construct_graph, batch_construct_graph, seq_batch_kde
 from particle_gym.utils import normalize_angle_rad, abs_diff
 from particle_dynamics_network.heatmap import uneven_batch_kde
-import particle_dynamics_network.graph_construction as gc 
 
 from particle_gym.rectangle import Rectangle 
 from visualize import visualize_traj
@@ -64,7 +63,8 @@ class GNNDynamicsModel(DynamicsModelBase):
         self.model = LitGraphNetwork.load_from_checkpoint(chkpt_path)
         self.model.eval()
         self.model.to(self.tensor_args['device'])
-
+        torch.set_grad_enabled(False)
+        
     def world_to_pixel_coord(self, x, y, depth=None):
         if depth == None:
             depth = 0.01 # Top of the table
@@ -125,7 +125,7 @@ class GNNDynamicsModel(DynamicsModelBase):
         # Normalize
         return p/(self.cam_props_width-1) 
 
-    def get_next_state(self, curr_state, act, dt):
+    def get_next_state(self, curr_state, act, slice_dirt=False):
         """
         Args:
             curr_state: torch.Tensor [batch_size, H, W]
@@ -139,7 +139,6 @@ class GNNDynamicsModel(DynamicsModelBase):
         # Assume dt is constant for now
         H = W = 128
         # import ipdb; ipdb.set_trace()
-        act = torch.tensor(act)
         
         tool_poses = curr_state[-3:].unsqueeze(0).repeat(self.batch_size, 1).to(**self.tensor_args)
         self.tools.update_poses(tool_poses)
@@ -150,13 +149,13 @@ class GNNDynamicsModel(DynamicsModelBase):
         # Sample points on initial segmentation, if initial segmentation 
         # has no segmented pixels, return batch of blank segmentations
         samples = self.get_fps_samples(start_state).unsqueeze(0).float()
-        if samples.shape[1] == 0:
-            return torch.cat((torch.zeros(H*W).to(**self.tensor_args), tool_poses[0]))
 
         # [slice, speed, angular velocity]
         action_edge_features = torch.zeros((1, self.model_action_len))
-        action_edge_features[:,1] = abs(act[0])
-        action_edge_features[:,2] = act[1]
+        if slice_dirt:
+            action_edge_features[:,1] = 1    
+        action_edge_features[:,1] = act[0]
+        action_edge_features[:,2] = abs(act[1])
 
         # [B, M, 2]
         tool_node_features = self.get_tool_particle_positions_px()[0].unsqueeze(0)
@@ -168,10 +167,9 @@ class GNNDynamicsModel(DynamicsModelBase):
             action_edge_features.type_as(samples)
         )
 
-        out_states = self.model.predict_one_step_rollout(gnn_in, [M]*self.batch_size, H, W, self.sigma)
-        out_states = out_states.flatten().to(**self.tensor_args)
-        out = torch.cat((out_states, tool_poses[0]))
-        return out
+        out_states = self.model.rollout(gnn_in, [M])
+
+        return out_states
 
     def rollout_open_loop(self, start_state, act_seq):
         """
@@ -198,12 +196,6 @@ class GNNDynamicsModel(DynamicsModelBase):
         # has no segmented pixels, return batch of blank segmentations
         new_samples = self.get_fps_samples(start_state)
         new_samples = new_samples.unsqueeze(0).repeat(self.batch_size, 1, 1)
-        pred = torch.zeros((self.batch_size, self.horizon, H, W))
-        if new_samples.shape[1] == 0:
-            print("zero")
-            seq_tool_poses = torch.cat([tool_poses.unsqueeze(1)]*self.horizon,dim=1)
-            pred = torch.flatten(pred, 2).to(**self.tensor_args)
-            # return torch.cat((pred,seq_tool_poses),dim=-1)
 
         out_states = None
 
@@ -212,22 +204,20 @@ class GNNDynamicsModel(DynamicsModelBase):
             self.horizon, 
             self.model_action_len
         ), device=self.tensor_args['device'])
-        action_edge_features[:,:,1] = abs(act_seq[:,:,0]) # speed
-        action_edge_features[:,:,2] = act_seq[:,:,1]      # angular velocity
+        action_edge_features[:,:,1] = act_seq[:,:,0] # angular velocity
+        action_edge_features[:,:,2] = abs(act_seq[:,:,1])      # speed
 
         exec_act_seq = act_seq.clone()
-        exec_act_seq[:,:,0] = abs(exec_act_seq[:,:,0])*self.max_speed 
-        exec_act_seq[:,:,1] = exec_act_seq[:,:,1]*self.max_ang_vel
+        exec_act_seq[:,:,0] = exec_act_seq[:,:,0]*self.max_ang_vel
+        exec_act_seq[:,:,1] = exec_act_seq[:,:,1]*self.max_speed
         # Keep track of tool positions at the BEGINNING of the timestep
         tool_poses = []
         tool_features = []
+        out_states = []
         for t in range(self.horizon):
             # import ipdb; ipdb.set_trace()
             # Get the tool node features from the current tool poses
             tool_node_features = self.get_tool_particle_positions_px()
-            self.tools.integrate_action_step(exec_act_seq[:,t,:])
-            tool_features.append(tool_node_features.unsqueeze(1))
-            # tool_poses.append(self.tools.poses.unsqueeze(0))
 
             gnn_in = batch_construct_graph(
                 new_samples, 
@@ -236,29 +226,21 @@ class GNNDynamicsModel(DynamicsModelBase):
                 # vis=True
             )
                 
-            # M = tool_node_features.shape[1]
-            # new_samples = self.model.rollout(gnn_in, [M]*self.batch_size)
+            M = tool_node_features.shape[1]
+            output = self.model.model(gnn_in)
+            out = output.x.reshape(self.batch_size, -1, 3)[:,:,:2]
+            new_samples = out[:,M:,:]
+            out_samples = new_samples.clone().unsqueeze(1)
+            out_states.append(out_samples)
 
             # Integrate action step after applying action
-            # self.tools.integrate_action_step(act_seq[:,t,:])
+            new_poses = self.tools.integrate_action_step(exec_act_seq[:,t,:])
+            self.tools.update_poses(new_poses)
 
-            # if out_states == None:
-            #     out_states = new_samples.copy()
-            # else:
-            #     # out_states [[T0, N0, 2],...,[TB, NB, 2]]
-            #     for b in range(self.batch_size):
-            #         out_states[b] = torch.cat((out_states[b], new_samples[b]))
-
-        # non_zero_pred = seq_batch_kde(out_states, H, W, self.sigma)
-        # for i in range(len(non_zero_pred)):
-        #     pred[i] = non_zero_pred[i]
-
+        # B x T x N x 2
+        out_states = torch.cat(out_states,dim=1)
         # visualize_traj(start_state.squeeze()[0], st[0], new_samples[0])
-
-        # seq_tool_poses = torch.stack(tool_poses, dim=2).squeeze()
-        # pred = torch.flatten(pred, 2).to(**self.tensor_args)
-        # return torch.cat((pred,seq_tool_poses),dim=-1)
-        return torch.cat(tool_features,dim=1)
+        return out_states
 
         # from line_profiler import LineProfiler
         # lp = LineProfiler()

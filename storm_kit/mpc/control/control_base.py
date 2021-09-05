@@ -226,6 +226,7 @@ class Controller(ABC):
         """
 
         n_iters = n_iters if n_iters is not None else self.n_iters
+        print(self.num_steps)
         # get input device:
         inp_device = state.device
         inp_dtype = state.dtype
@@ -234,8 +235,10 @@ class Controller(ABC):
         info = dict(rollout_time=0.0, entropy=[])
         # shift distribution to hotstart from previous timestep
         if self.hotstart:
+        # if self.num_steps % 10 != 0:
             self._shift(shift_steps)
         else:
+            print("resetting distribution")
             self.reset_distribution()
             
 

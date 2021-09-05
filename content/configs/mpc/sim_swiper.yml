@@ -78,10 +78,10 @@ model:
   max_action: 1 #10.0
   max_speed: 0.05 #m/s
   max_ang_vel: 0.7853981633974483
-  batch_size: 500
+  batch_size: 100
   sampling_threshold: 5.
   sigma: 1
-  model_dir: "/home/vinitha/workspaces/mppi_particles/particle_dynamics_network/checkpoints/grta_5_1/"
+  model_dir: "/home/vinitha/workspaces/mppi_particles/particle_dynamics_network/checkpoints/grta_5_4/"
   model_name: 'best.ckpt' #"seq_7_layers" #"model_t5_b4_s1_l7_10_seq"
 
   network_config:
@@ -102,19 +102,19 @@ model:
         - 50
 
 mppi:
-  horizon           : 10 # 100
+  horizon           : 15 # 100
   init_cov          : 0.5 #.5
   gamma             : 0.98 #
   n_iters           : 1
-  step_size_mean    : 0.5
-  step_size_cov     : 0.5
-  beta              : 500.0
+  step_size_mean    : 0.8
+  step_size_cov     : 0.8
+  beta              : 10
   alpha             : 1
   num_particles     : 100 #10000
   update_cov        : True
   cov_type          : 'diag_AxA' # 
   kappa             : 0.0001
-  null_act_frac     : 0.5
+  null_act_frac     : 0.01
   sample_mode       : 'mean'
   base_action       : 'repeat'
   squash_fn         : 'clamp' # [clamp,]
@@ -126,5 +126,5 @@ mppi:
     sample_ratio: {'halton':0.0, 'halton-knot':1.0, 'random':0.0, 'random-knot':0.0}
     seed: 0
     filter_coeffs: None #[0.5, 0.3, 0.2]
-    knot_scale: 3
+    knot_scale: 1
     #filter_coeffs: [1.0, 0.0, 0.0]

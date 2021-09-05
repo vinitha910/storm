@@ -46,7 +46,9 @@ class ParticleTask(BaseTask):
         mppi_params['d_action'] = dynamics_model.d_action
         mppi_params['action_lows'] = -exp_params['model']['max_action'] * torch.ones(dynamics_model.d_action, **self.tensor_args)
         mppi_params['action_highs'] = exp_params['model']['max_action'] * torch.ones(dynamics_model.d_action, **self.tensor_args)
-        init_action = torch.ones((mppi_params['horizon'], dynamics_model.d_action), **self.tensor_args)*1.57
+        init_action = torch.ones((mppi_params['horizon'], dynamics_model.d_action), **self.tensor_args)
+        init_action[:,0] *= 0.
+        init_action[:,1] *= 0.
         mppi_params['init_mean'] = init_action
         mppi_params['rollout_fn'] = rollout_fn
         mppi_params['tensor_args'] = self.tensor_args
