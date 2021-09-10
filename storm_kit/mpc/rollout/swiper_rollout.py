@@ -3,8 +3,10 @@ import numpy as np
 from chamferdist import ChamferDistance
 import time 
 import matplotlib.pyplot as plt
+import point_cloud_utils as pcu
 
 from ...mpc.model.cont_gnn_dynamics_model import GNNDynamicsModel
+from ...mpc.model.conv_dynamics_model import ConvLSTMDynamicsModel
 from ...mpc.model.sim_dynamics_model import SimDynamicsModel
 from ...mpc.rollout.rollout_base import RolloutBase
 
@@ -19,7 +21,11 @@ class SwiperRollout(RolloutBase):
         self.horizon = mppi_params['horizon'] # model_params['dt']
         self.batch_size = exp_params['model']['batch_size']
 
-        self.dynamics_model = GNNDynamicsModel(
+        # self.dynamics_model = GNNDynamicsModel(
+        #     config=self.exp_params,
+        #     tensor_args=self.tensor_args
+        # )
+        self.dynamics_model = ConvLSTMDynamicsModel(
             config=self.exp_params,
             tensor_args=self.tensor_args
         )
@@ -39,14 +45,24 @@ class SwiperRollout(RolloutBase):
         # B, T, _ = states.shape
         H = W = 128
         # states = states[:,:,:-3].reshape(self.batch_size,self.horizon,H,W)
-        # batch: [horizon, H, W]
-        batches = []
-        for t in range(self.horizon):
-            batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')**2
-            batches.append(batch.unsqueeze(1))
-        costs = torch.cat(batches, dim=1)
+        goal_pts = self.goal_pts[0].detach().cpu().numpy()
+        goal_pts = np.concatenate((goal_pts,np.zeros((goal_pts.shape[0],1))),axis=1)
+        costs = np.zeros((self.batch_size, self.horizon))
+        for b in range(self.batch_size):
+            for t in range(self.horizon):
+                state = states[b][t].float().detach().cpu().numpy()
+                state = np.concatenate((state,np.zeros((state.shape[0],1))),axis=1)
+                forward = pcu.chamfer_distance(state, goal_pts)
+                backward = pcu.chamfer_distance(goal_pts, state)
+                costs[b][t] = forward + backward
 
-        return costs
+        return torch.tensor(costs*100.)
+
+        # batches = []
+        # for t in range(self.horizon):
+        #     batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')**2
+        #     batches.append(batch.unsqueeze(1))
+        # costs = torch.cat(batches, dim=1)
 
         # source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
         # if len(source_pts) == 0:
@@ -65,12 +81,12 @@ class SwiperRollout(RolloutBase):
                 start_state: torch.Tensor [H, W]
                 act_seq: torch.Tensor [num_rollouts, horizon, act_vec]
         '''
-        from line_profiler import LineProfiler
-        lp = LineProfiler()
-        lp_wrapper = lp(self.dynamics_model.rollout_open_loop)
-        lp_wrapper(start_state, act_seq)
-        lp.print_stats()
-        return
+        # from line_profiler import LineProfiler
+        # lp = LineProfiler()
+        # lp_wrapper = lp(self.dynamics_model.rollout_open_loop)
+        # lp_wrapper(start_state, act_seq)
+        # lp.print_stats()
+        # return
 
         rollout_time = time.time()
         out_states = self.dynamics_model.rollout_open_loop(start_state, act_seq)

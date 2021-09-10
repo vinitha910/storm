@@ -13,7 +13,7 @@ from ...util_file import get_mpc_configs_path as mpc_configs_path
 from ..utils.torch_utils import find_first_idx, find_last_idx
 
 class ParticleTask(BaseTask):
-    def __init__(self, exp_params, env=None, tensor_args={'device':"cpu", 'dtype':torch.float32}):
+    def __init__(self, exp_params, env=None, tensor_args={'device':'cuda', 'dtype':torch.float32}):
         super().__init__(tensor_args=tensor_args)
         self.env = env
         self.controller = self.init_mppi(exp_params)
@@ -27,9 +27,16 @@ class ParticleTask(BaseTask):
         self.controller.rollout_fn.update_params(**kwargs)
         return True
 
-    def get_command(self, t_step, curr_state, control_dt=0.0, WAIT=False):
+    def get_command(self, t_step, curr_state, control_dt=0.0, WAIT=False, n_iter=1):
         # import ipdb; ipdb.set_trace()
-        next_command, val, info, best_action = self.control_process.get_command_debug(t_step, curr_state, integrate_act=False, control_dt=control_dt)
+        next_command, val, info, best_action = \
+            self.control_process.get_command_debug(
+                t_step, 
+                curr_state, 
+                integrate_act=False, 
+                control_dt=control_dt, 
+                n_iter=n_iter
+            )
 
         return next_command, self.controller.trajectories['actions'], self.controller.trajectories['costs']
 

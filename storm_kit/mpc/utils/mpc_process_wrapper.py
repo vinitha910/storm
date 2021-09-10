@@ -87,7 +87,7 @@ class ControlProcess(object):
     
         return curr_state
     
-    def get_command_debug(self, t_step, curr_state, integrate_act=True, debug=False, control_dt=0.01):
+    def get_command_debug(self, t_step, curr_state, integrate_act=True, debug=False, control_dt=0.01, n_iter=1):
         """ This function runs the controller in the same process and waits for optimization to  complete before return of a new command
         Args:
         t_step: current timestep
@@ -112,7 +112,7 @@ class ControlProcess(object):
         # return
 
         mpc_time = time.time()
-        command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps))
+        command = list(self.controller.optimize(state_tensor, shift_steps=shift_steps, n_iters=n_iter))
         mpc_time = time.time() - mpc_time
         print('MPC TIME: ' + str(mpc_time))
 

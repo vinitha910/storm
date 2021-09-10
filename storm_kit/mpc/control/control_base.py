@@ -256,6 +256,7 @@ class Controller(ABC):
                     # check if converged
                     if self.check_convergence():
                         break
+
         self.trajectories = trajectory
         #calculate best action
         # curr_action = self._get_next_action(state, mode=self.sample_mode)

@@ -10,17 +10,14 @@ from torch_geometric.data import Data, Batch
 from ...mpc.model.model_base import DynamicsModelBase
 from ...mpc.model.integration_utils import build_int_matrix
 
-from particle_dynamics_network.lit_graph_network import LitGraphNetwork
-from particle_dynamics_network.lit_utils import fps_samples, construct_graph, batch_construct_graph, seq_batch_kde
-from particle_gym.utils import normalize_angle_rad, abs_diff
-from particle_dynamics_network.heatmap import uneven_batch_kde
-from particle_dynamics_network.lit_visualize import visualize_rollouts, visualize_graph, visualize_seq_rollouts, plot_grad_flow
+from physical_interaction_video_prediction_pytorch.networks import ConvLSTM, network
+from physical_interaction_video_prediction_pytorch.options import Options
 
 from particle_gym.rectangle import Rectangle 
 from visualize import visualize_traj
 from batch_tools import BatchTools
 
-class GNNDynamicsModel(DynamicsModelBase):
+class ConvLSTMDynamicsModel(DynamicsModelBase):
     def __init__(self, config, tensor_args={'device':'cuda','dtype':torch.float32}):
         self.tensor_args = tensor_args
         
@@ -54,50 +51,31 @@ class GNNDynamicsModel(DynamicsModelBase):
         # self.tool = Rectangle(0., 0., tool_config['length'], tool_config['width'])
         self.tools = BatchTools(batch_size=self.batch_size, l_m=tool_config['length'], w_m=tool_config['width'])
         
-        self.curr_tool_pose = None
         # Initialize dynamics model
         self.init_model(config['model']['model_dir'] + config['model']['model_name'])
 
     def init_model(self, chkpt_path):
         print("Loading model " + chkpt_path)
-        self.model = LitGraphNetwork.load_from_checkpoint(chkpt_path)
+        opt = Options().parse()
+        opt.pretrained_model = chkpt_path
+        opt.sequence_length = self.horizon
+        self.model = network(
+            opt.channels, 
+            opt.height,
+            opt.width, 
+            -1,
+            opt.schedsamp_k,
+            opt.use_state,
+            opt.num_masks,
+            opt.model=='STP',
+            opt.model=='CDNA',
+            opt.model=='DNA',
+            opt.context_frames
+        )
+        self.model.load_state_dict(torch.load(opt.pretrained_model))
         self.model.eval()
         self.model.to(self.tensor_args['device'])
         torch.set_grad_enabled(False)
-        
-    def world_to_pixel_coord(self, x, y, depth=None):
-        if depth == None:
-            depth = 0.01 # Top of the table
-
-        X = torch.tensor([[x], [depth], [y], [1]]).float()
-        # X = np.matrix([[x], [depth], [y], [1]]) 
-
-        # Convert point from world frame to overhead camera frame
-        p = self.wTc.matmul(X).float()
-        # p = self.wTc * X
-        p[2] = fabs(p[2])
-        p = self.cTi.matmul(p[:3]) / fabs(p[2])
-        # p = self.cTi * p[:3] / fabs(p[2])
-
-        # Must subtract y from length of image
-        return torch.tensor([int(p[0]), self.cam_props_width - int(p[1])])
-        # return (int(p[0]), self.cam_props_width - int(p[1]))
-
-    def get_fps_samples(self, curr_state):
-        '''
-            Args:
-                curr_state: torch.Tensor [B, H, W]
-
-            Return:
-                batch_samples: [[N0, 2], [N1, 2],...,[NB, 2]]
-        '''
-        H, W = curr_state.squeeze().shape
-        state = curr_state.squeeze()
-        samples = torch.nonzero(state)
-        if len(samples) != 0:
-            samples = fps_samples(samples)/(H - 1)
-
-        return samples
 
     def get_tool_particle_positions_px(self, particles=None):
         if particles == None:
@@ -189,72 +167,51 @@ class GNNDynamicsModel(DynamicsModelBase):
             out_states: torch.Tensor [batch_size, horizon, H * W + 3]
         """
 
-        # Scale action sequence to true action range
-        # act_seq *= np.pi 
         tool_poses = start_state[:,-3:].repeat(self.batch_size, 1)
         self.tools.update_poses(tool_poses)
 
-        H = W = 128
-        start_state = start_state[:,:-3].reshape(1,H,W)
-        
-        # Sample points on initial segmentation, if initial segmentation 
-        # has no segmented pixels, return batch of blank segmentations
-        new_samples = self.get_fps_samples(start_state)
-        new_samples = new_samples.unsqueeze(0).repeat(self.batch_size, 1, 1)
-
-        out_states = None
-
-        action_edge_features = torch.zeros((
+        action_features = torch.zeros((
             self.batch_size, 
-            self.horizon, 
-            self.model_action_len
-        ), device=self.tensor_args['device'])
-        action_edge_features[:,:,1] = act_seq[:,:,0] # angular velocity
-        action_edge_features[:,:,2] = abs(act_seq[:,:,1])      # speed
+            self.horizon,
+            self.model_action_len),
+            device=self.tensor_args['device']
+        )
+        action_features[:,:,1] = act_seq[:,:,0] # angular velocity
+        action_features[:,:,2] = act_seq[:,:,1]      # speed
 
         exec_act_seq = act_seq.clone()
         exec_act_seq[:,:,0] = exec_act_seq[:,:,0]*self.max_ang_vel
-        exec_act_seq[:,:,1] = abs(exec_act_seq[:,:,1]*self.max_speed)
-        # Keep track of tool positions at the BEGINNING of the timestep
-        tool_poses = []
-        tool_features = []
-        out_states = []
-
-        graphs = []
+        exec_act_seq[:,:,1] = exec_act_seq[:,:,1]*self.max_speed
+        
+        seq_action_features = []
         for t in range(self.horizon):
-            # import ipdb; ipdb.set_trace()
-            # Get the tool node features from the current tool poses
-            tool_node_features = self.get_tool_particle_positions_px()
-
-            gnn_in = batch_construct_graph(
-                new_samples, 
-                tool_node_features, 
-                action_edge_features[:,t,:],
-                # vis=True
+            tool_features = self.get_tool_particle_positions_px().flatten(1,2)
+            # B x 21 (18 tool node values, 3 action vals)
+            seq_action_features.append(torch.cat((
+                tool_features, 
+                action_features[:,t,:]),dim=1)
             )
-            graphs.append(gnn_in[0].clone())
 
-            M = tool_node_features.shape[1]
-            output = self.model.model(gnn_in)
-            out = output.x.reshape(self.batch_size, -1, 3)[:,:,:2]
-            new_samples = out[:,M:,:]
-            out_samples = new_samples.clone().unsqueeze(1)
-            out_states.append(out_samples)
+            new_tool_poses = self.tools.integrate_action_step(exec_act_seq[:,t,:])
+            self.tools.update_poses(new_tool_poses)
 
-            # Integrate action step after applying action
-            new_poses = self.tools.integrate_action_step(exec_act_seq[:,t,:])
-            self.tools.update_poses(new_poses)
-            
-            # visualize_traj(start_state.squeeze(), gnn_in[0], new_samples[0])
+        seq_action_features = torch.stack(seq_action_features)
 
-        # B x T x N x 2
-        out_states = torch.cat(out_states,dim=1)
-        # kde = seq_batch_kde(out_states, H, W)
+        start_state = start_state[:,:-3].reshape(1,128,128).repeat(self.batch_size, 1, 1).unsqueeze(1)
+        out_states = self.model.forward_from_single(start_state.double(), seq_action_features.double(), self.horizon)
+        out_states = torch.cat(out_states, dim=1)
+        out = torch.stack(torch.where(out_states > 0.5)).T
+        out[:,2:] = out[:,2:]/127.
 
-        if vis:
-            return out_states, graphs
+        _, counts = out[:,0].unique(dim=0, return_counts=True)
+        batches = torch.split(out[:,1:], list(counts))
+        sequences = []
+        for batch in batches:
+            _, counts = batch[:,0].unique(dim=0, return_counts=True)
+            seq = torch.split(batch[:, 1:], list(counts))
+            sequences.append(seq)
 
-        return out_states
+        return sequences
 
         # from line_profiler import LineProfiler
         # lp = LineProfiler()
