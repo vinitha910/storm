@@ -21,14 +21,14 @@ class SwiperRollout(RolloutBase):
         self.horizon = mppi_params['horizon'] # model_params['dt']
         self.batch_size = exp_params['model']['batch_size']
 
-        # self.dynamics_model = GNNDynamicsModel(
-        #     config=self.exp_params,
-        #     tensor_args=self.tensor_args
-        # )
-        self.dynamics_model = ConvLSTMDynamicsModel(
+        self.dynamics_model = GNNDynamicsModel(
             config=self.exp_params,
             tensor_args=self.tensor_args
         )
+        # self.dynamics_model = ConvLSTMDynamicsModel(
+        #     config=self.exp_params,
+        #     tensor_args=self.tensor_args
+        # )
         
         self.goal_pts = None
 
@@ -39,6 +39,8 @@ class SwiperRollout(RolloutBase):
             Args:
                 states: torch.Tensor [batch_size, horizon, H, W]
         '''
+        states, tool_poses = states
+        
         chamferDist = ChamferDistance()
 
         costs = []
@@ -48,8 +50,14 @@ class SwiperRollout(RolloutBase):
         goal_pts = self.goal_pts[0].detach().cpu().numpy()
         goal_pts = np.concatenate((goal_pts,np.zeros((goal_pts.shape[0],1))),axis=1)
         costs = np.zeros((self.batch_size, self.horizon))
+
         for b in range(self.batch_size):
             for t in range(self.horizon):
+                pose = tool_poses[b][t][:2]
+                if (pose > 0.15).any() or (pose < -0.15).any():
+                    costs[b][t] = 10000.
+                    continue
+
                 state = states[b][t].float().detach().cpu().numpy()
                 state = np.concatenate((state,np.zeros((state.shape[0],1))),axis=1)
                 forward = pcu.chamfer_distance(state, goal_pts)

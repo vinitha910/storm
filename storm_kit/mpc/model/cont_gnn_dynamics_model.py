@@ -31,7 +31,7 @@ class GNNDynamicsModel(DynamicsModelBase):
 
         self.max_speed = config['model']['max_speed']
         self.max_ang_vel = config['model']['max_ang_vel']
-
+        
         # config = YamlConfig(config_path)
         self.dt = 1 #config['model']['dt']
         self.model_action_len = 3 # [slice, speed, angular velocity]
@@ -155,7 +155,7 @@ class GNNDynamicsModel(DynamicsModelBase):
         if slice_dirt:
             action_edge_features[:,1] = 1    
         action_edge_features[:,1] = act[0]
-        action_edge_features[:,2] = abs(act[1])
+        action_edge_features[:,2] = act[1]
 
         # [B, M, 2]
         tool_node_features = self.get_tool_particle_positions_px()[0].unsqueeze(0)
@@ -210,13 +210,13 @@ class GNNDynamicsModel(DynamicsModelBase):
             self.model_action_len
         ), device=self.tensor_args['device'])
         action_edge_features[:,:,1] = act_seq[:,:,0] # angular velocity
-        action_edge_features[:,:,2] = abs(act_seq[:,:,1])      # speed
+        action_edge_features[:,:,2] = act_seq[:,:,1]      # speed
 
         exec_act_seq = act_seq.clone()
         exec_act_seq[:,:,0] = exec_act_seq[:,:,0]*self.max_ang_vel
-        exec_act_seq[:,:,1] = abs(exec_act_seq[:,:,1]*self.max_speed)
+        exec_act_seq[:,:,1] = exec_act_seq[:,:,1]*self.max_speed
         # Keep track of tool positions at the BEGINNING of the timestep
-        tool_poses = []
+        seq_tool_poses = []
         tool_features = []
         out_states = []
 
@@ -244,11 +244,11 @@ class GNNDynamicsModel(DynamicsModelBase):
             # Integrate action step after applying action
             new_poses = self.tools.integrate_action_step(exec_act_seq[:,t,:])
             self.tools.update_poses(new_poses)
-            
+            seq_tool_poses.append(new_poses)
             # visualize_traj(start_state.squeeze(), gnn_in[0], new_samples[0])
 
         # B x T x N x 2
-        out_states = torch.cat(out_states,dim=1)
+        out_states = torch.cat(out_states,dim=1), torch.stack(seq_tool_poses, dim=1)
         # kde = seq_batch_kde(out_states, H, W)
 
         if vis:
