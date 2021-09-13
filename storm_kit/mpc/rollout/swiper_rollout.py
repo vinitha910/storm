@@ -39,38 +39,44 @@ class SwiperRollout(RolloutBase):
             Args:
                 states: torch.Tensor [batch_size, horizon, H, W]
         '''
-        states, tool_poses = states
-        
         chamferDist = ChamferDistance()
+        
+        start_state, states = states
+        start_state = start_state.repeat(self.batch_size,1,1)
+        start_cost = chamferDist(start_state.float(), self.goal_pts, bidirectional=True)
+        start_cost = start_cost.repeat(self.batch_size, 1)
 
         costs = []
         # B, T, _ = states.shape
         H = W = 128
         # states = states[:,:,:-3].reshape(self.batch_size,self.horizon,H,W)
-        goal_pts = self.goal_pts[0].detach().cpu().numpy()
-        goal_pts = np.concatenate((goal_pts,np.zeros((goal_pts.shape[0],1))),axis=1)
-        costs = np.zeros((self.batch_size, self.horizon))
+        # goal_pts = self.goal_pts[0].detach().cpu().numpy()
+        # goal_pts = np.concatenate((goal_pts,np.zeros((goal_pts.shape[0],1))),axis=1)
+        # costs = np.zeros((self.batch_size, self.horizon))
 
-        for b in range(self.batch_size):
-            for t in range(self.horizon):
-                pose = tool_poses[b][t][:2]
-                if (pose > 0.15).any() or (pose < -0.15).any():
-                    costs[b][t] = 10000.
-                    continue
+        # for b in range(self.batch_size):
+        #     for t in range(self.horizon):
+                # pose = tool_poses[b][t][:2]
+                # if (pose > 0.15).any() or (pose < -0.15).any():
+                #     costs[b][t] = 10000.
+                #     continue
 
-                state = states[b][t].float().detach().cpu().numpy()
-                state = np.concatenate((state,np.zeros((state.shape[0],1))),axis=1)
-                forward = pcu.chamfer_distance(state, goal_pts)
-                backward = pcu.chamfer_distance(goal_pts, state)
-                costs[b][t] = forward + backward
+                # state = states[b][t].float().detach().cpu().numpy()
+                # state = np.concatenate((state,np.zeros((state.shape[0],1))),axis=1)
+                # forward = pcu.chamfer_distance(state, goal_pts)
+                # backward = pcu.chamfer_distance(goal_pts, state)
+                # costs[b][t] = forward + backward
 
-        return torch.tensor(costs*100.)
+        # return torch.tensor(costs*100.)
 
-        # batches = []
-        # for t in range(self.horizon):
-        #     batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')**2
-        #     batches.append(batch.unsqueeze(1))
-        # costs = torch.cat(batches, dim=1)
+        batches = []
+        for t in range(self.horizon):
+            batch = chamferDist(states[:,t,:,:].float(), self.goal_pts, bidirectional=True, reduction='none')
+            batches.append(batch.unsqueeze(1))
+        costs = torch.cat(batches, dim=1)
+
+        all_costs = torch.cat((start_cost, costs), dim=1)
+        return all_costs[:,1:] - all_costs[:,:-1]
 
         # source_pts = torch.stack(torch.where(state > 0.5)).T.to(**self.tensor_args)/(H-1)
         # if len(source_pts) == 0:

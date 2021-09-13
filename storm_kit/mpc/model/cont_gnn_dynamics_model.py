@@ -199,8 +199,8 @@ class GNNDynamicsModel(DynamicsModelBase):
         
         # Sample points on initial segmentation, if initial segmentation 
         # has no segmented pixels, return batch of blank segmentations
-        new_samples = self.get_fps_samples(start_state)
-        new_samples = new_samples.unsqueeze(0).repeat(self.batch_size, 1, 1)
+        start_samples = self.get_fps_samples(start_state)
+        new_samples = start_samples.unsqueeze(0).repeat(self.batch_size, 1, 1)
 
         out_states = None
 
@@ -248,13 +248,13 @@ class GNNDynamicsModel(DynamicsModelBase):
             # visualize_traj(start_state.squeeze(), gnn_in[0], new_samples[0])
 
         # B x T x N x 2
-        out_states = torch.cat(out_states,dim=1), torch.stack(seq_tool_poses, dim=1)
+        out_states = torch.cat(out_states,dim=1) #, torch.stack(seq_tool_poses, dim=1)
         # kde = seq_batch_kde(out_states, H, W)
 
         if vis:
             return out_states, graphs
 
-        return out_states
+        return start_samples, out_states
 
         # from line_profiler import LineProfiler
         # lp = LineProfiler()
