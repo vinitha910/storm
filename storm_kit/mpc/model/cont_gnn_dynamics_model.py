@@ -14,7 +14,7 @@ from particle_dynamics_network.lit_graph_network import LitGraphNetwork
 from particle_dynamics_network.lit_utils import fps_samples, construct_graph, batch_construct_graph, seq_batch_kde
 from particle_gym.utils import normalize_angle_rad, abs_diff
 from particle_dynamics_network.heatmap import uneven_batch_kde
-from particle_dynamics_network.lit_visualize import visualize_rollouts, visualize_graph, visualize_seq_rollouts, plot_grad_flow
+from particle_dynamics_network.lit_visualize import visualize_graph_rollouts, visualize_rollouts, visualize_graph, visualize_seq_rollouts, plot_grad_flow, visualize_model_rollouts
 
 from particle_gym.rectangle import Rectangle 
 from visualize import visualize_traj
@@ -199,8 +199,8 @@ class GNNDynamicsModel(DynamicsModelBase):
         
         # Sample points on initial segmentation, if initial segmentation 
         # has no segmented pixels, return batch of blank segmentations
-        new_samples = self.get_fps_samples(start_state)
-        new_samples = new_samples.unsqueeze(0).repeat(self.batch_size, 1, 1)
+        start_samples = self.get_fps_samples(start_state)
+        new_samples = start_samples.unsqueeze(0).repeat(self.batch_size, 1, 1)
 
         out_states = None
 
@@ -225,11 +225,13 @@ class GNNDynamicsModel(DynamicsModelBase):
             # import ipdb; ipdb.set_trace()
             # Get the tool node features from the current tool poses
             tool_node_features = self.get_tool_particle_positions_px()
+            tool_features.append(tool_node_features)
 
             gnn_in = batch_construct_graph(
                 new_samples, 
                 tool_node_features, 
                 action_edge_features[:,t,:],
+                edge_radius=0.06
                 # vis=True
             )
             graphs.append(gnn_in[0].clone())
@@ -238,8 +240,7 @@ class GNNDynamicsModel(DynamicsModelBase):
             output = self.model.model(gnn_in)
             out = output.x.reshape(self.batch_size, -1, 3)[:,:,:2]
             new_samples = out[:,M:,:]
-            out_samples = new_samples.clone().unsqueeze(1)
-            out_states.append(out_samples)
+            out_states.append(new_samples.clone().unsqueeze(1))
 
             # Integrate action step after applying action
             new_poses = self.tools.integrate_action_step(exec_act_seq[:,t,:])
@@ -248,13 +249,15 @@ class GNNDynamicsModel(DynamicsModelBase):
             # visualize_traj(start_state.squeeze(), gnn_in[0], new_samples[0])
 
         # B x T x N x 2
-        out_states = torch.cat(out_states,dim=1), torch.stack(seq_tool_poses, dim=1)
+        out_states = torch.cat(out_states,dim=1) #, torch.stack(seq_tool_poses, dim=1)
+        # visualize_model_rollouts(out_states, torch.stack(tool_features, dim=1))
+        # visualize_graph_rollouts(graphs)
         # kde = seq_batch_kde(out_states, H, W)
 
         if vis:
             return out_states, graphs
 
-        return out_states
+        return start_samples, out_states, torch.stack(tool_features, dim=1)
 
         # from line_profiler import LineProfiler
         # lp = LineProfiler()

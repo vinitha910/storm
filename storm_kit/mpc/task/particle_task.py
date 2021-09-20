@@ -38,7 +38,7 @@ class ParticleTask(BaseTask):
                 n_iter=n_iter
             )
 
-        return next_command, self.controller.trajectories['actions'], self.controller.trajectories['costs']
+        return next_command, self.controller.trajectories 
 
     def init_mppi(self, exp_params):
 

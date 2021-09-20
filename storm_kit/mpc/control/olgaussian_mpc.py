@@ -221,8 +221,6 @@ class OLGaussianMPC(Controller):
         
         act_seq = self.sample_actions(state=state) # sample noise from covariance of current control distribution
 
-
-
         trajectories = self._rollout_fn(state, act_seq)
         return trajectories
     
